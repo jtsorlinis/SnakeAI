@@ -7,7 +7,11 @@ export class Food {
     this.position = this.getRandomPosition();
   }
 
-  getRandomPosition(): Point {
+  randomize() {
+    this.position = this.getRandomPosition();
+  }
+
+  private getRandomPosition(): Point {
     return {
       x: Math.floor(Math.random() * GRID_WIDTH),
       y: Math.floor(Math.random() * GRID_HEIGHT),

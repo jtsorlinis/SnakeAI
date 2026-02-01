@@ -102,8 +102,8 @@ export class Game {
   }
 
   initAIGame() {
-    this.population = [];
-    this.foods = [];
+    this.population.length = 0;
+    this.foods.length = 0;
     for (let i = 0; i < this.popSize; i++) {
       this.population.push(new Snake());
       this.foods.push(new Food());
@@ -216,8 +216,8 @@ export class Game {
         return;
       }
 
-      this.population = [];
-      this.foods = [];
+      this.population.length = 0;
+      this.foods.length = 0;
       this.generation = data.generation || 1;
       this.bestScore = data.score || 0;
       this.highScoreGen = this.generation;
@@ -358,8 +358,11 @@ export class Game {
       newPop.push(new Snake(childBrain));
     }
 
-    this.population = newPop;
-    this.foods = new Array(this.popSize).fill(0).map(() => new Food());
+    this.population.length = 0;
+    for (const snake of newPop) {
+      this.population.push(snake);
+    }
+    this.resetFoods();
     this.generation++;
     this.gensSinceImprovement = this.generation - this.highScoreGen;
   }
@@ -376,6 +379,19 @@ export class Game {
     return best;
   }
 
+  private resetFoods() {
+    if (this.foods.length !== this.popSize) {
+      this.foods.length = 0;
+      for (let i = 0; i < this.popSize; i++) {
+        this.foods.push(new Food());
+      }
+      return;
+    }
+    for (let i = 0; i < this.foods.length; i++) {
+      this.foods[i].randomize();
+    }
+  }
+
   private pickTopK(k: number): Snake[] {
     if (k <= 0) return [];
     const top: Snake[] = [];
@@ -387,15 +403,22 @@ export class Game {
       }
 
       if (top.length < k) {
-        top.push(snake);
-        top.sort((a, b) => b.fitness - a.fitness);
+        let insertAt = top.length;
+        while (insertAt > 0 && snake.fitness > top[insertAt - 1].fitness) {
+          insertAt--;
+        }
+        top.splice(insertAt, 0, snake);
         continue;
       }
 
-      if (snake.fitness > top[top.length - 1].fitness) {
-        top[top.length - 1] = snake;
-        top.sort((a, b) => b.fitness - a.fitness);
+      if (snake.fitness <= top[top.length - 1].fitness) continue;
+
+      let insertAt = top.length - 1;
+      while (insertAt > 0 && snake.fitness > top[insertAt - 1].fitness) {
+        insertAt--;
       }
+      top.splice(insertAt, 0, snake);
+      top.pop();
     }
 
     return top;
