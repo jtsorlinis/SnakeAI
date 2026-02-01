@@ -3,12 +3,11 @@ export class NeuralNetwork {
   hiddenNodes: number;
   outputNodes: number;
 
-  weightsIH: Float32Array; // Size: hidden * input
-  weightsHO: Float32Array; // Size: output * hidden
+  weightsIH: Float32Array;
+  weightsHO: Float32Array;
   biasH: Float32Array;
   biasO: Float32Array;
 
-  // Reuse buffers to avoid GC.
   private hiddenBuffer: Float32Array;
   private outputBuffer: Float32Array;
 
@@ -44,7 +43,6 @@ export class NeuralNetwork {
   }
 
   predict(inputs: number[] | Float32Array): Float32Array {
-    // Input -> Hidden
     for (let i = 0; i < this.hiddenNodes; i++) {
       let sum = 0;
       const offset = i * this.inputNodes;
@@ -55,7 +53,6 @@ export class NeuralNetwork {
       this.hiddenBuffer[i] = 1 / (1 + Math.exp(-sum));
     }
 
-    // Hidden -> Output
     for (let i = 0; i < this.outputNodes; i++) {
       let sum = 0;
       const offset = i * this.hiddenNodes;
@@ -123,7 +120,6 @@ export class NeuralNetwork {
     return clone;
   }
 
-  // Custom JSON serialization for TypedArrays.
   toJSON() {
     return {
       inputNodes: this.inputNodes,
@@ -138,12 +134,10 @@ export class NeuralNetwork {
 
   static restore(obj: any): NeuralNetwork {
     const nn = new NeuralNetwork(obj.inputNodes, obj.hiddenNodes, obj.outputNodes);
-
     nn.weightsIH.set(obj.weightsIH);
     nn.weightsHO.set(obj.weightsHO);
     nn.biasH.set(obj.biasH);
     nn.biasO.set(obj.biasO);
-
     return nn;
   }
 

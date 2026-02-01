@@ -1,13 +1,14 @@
-import { Snake } from "./Snake";
+import { Snake, BRAIN_CONFIG } from "./Snake";
 import { Food } from "./Food";
 import { NeuralNetwork } from "./NeuralNetwork";
 import { TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from "./types";
 
 export class Game {
+  private static readonly SAVE_KEY = "bestSnakeBrain";
+
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
 
-  // AI Mode
   population: Snake[] = [];
   foods: Food[] = [];
   generation: number = 1;
@@ -20,25 +21,21 @@ export class Game {
   turboMode: boolean = false;
   showAll: boolean = false;
 
-  // AI Settings
-  popSize: number = 500;
+  popSize: number = 300;
   mutationRate: number = 0.05;
   currentMutationRate: number = 0.05;
 
-  // Stats
   averageScore: number = 0;
   gensSinceImprovement: number = 0;
   highScoreGen: number = 1;
   lastStatus: string = "";
 
-  // UI
   turboToggle: HTMLInputElement;
   showAllToggle: HTMLInputElement;
   resetBtn: HTMLButtonElement;
   toastElement: HTMLElement;
   toastTimeout: number | null = null;
 
-  // Saved Stats UI
   savedStatsDiv: HTMLElement;
   savedGenSpan: HTMLElement;
   savedScoreSpan: HTMLElement;
@@ -68,8 +65,8 @@ export class Game {
 
     this.lastTime = 0;
 
-    if (localStorage.getItem("bestSnakeBrain")) {
-      this.loadBestSnake(true); // silent mode
+    if (localStorage.getItem(Game.SAVE_KEY)) {
+      this.loadBestSnake(true);
     } else {
       this.initAIGame();
     }
@@ -81,7 +78,7 @@ export class Game {
   }
 
   private getScore(snake: Snake): number {
-    return snake.body.length - 3;
+    return snake.score;
   }
 
   private getStatus(): string {
@@ -96,7 +93,7 @@ export class Game {
     if (this.toastTimeout) {
       clearTimeout(this.toastTimeout);
     }
-    this.toastElement.innerText = message;
+    this.toastElement.textContent = message;
     this.toastElement.classList.add("visible");
 
     this.toastTimeout = window.setTimeout(() => {
@@ -111,7 +108,7 @@ export class Game {
       this.population.push(new Snake());
       this.foods.push(new Food());
     }
-    this.targetFPS = 60; // Smooth AI visualization
+    this.targetFPS = 60;
   }
 
   setupInput() {
@@ -131,7 +128,7 @@ export class Game {
   }
 
   resetBestSnake() {
-    localStorage.removeItem("bestSnakeBrain");
+    localStorage.removeItem(Game.SAVE_KEY);
     this.bestScore = 0;
     this.generation = 1;
     this.highScoreGen = 1;
@@ -142,7 +139,7 @@ export class Game {
   }
 
   updateSavedStatsDisplay() {
-    const raw = localStorage.getItem("bestSnakeBrain");
+    const raw = localStorage.getItem(Game.SAVE_KEY);
     if (!raw) {
       this.savedStatsDiv.style.display = "none";
       return;
@@ -153,15 +150,15 @@ export class Game {
     try {
       const data = JSON.parse(raw);
       if (data.brainData) {
-        this.savedGenSpan.innerText = data.generation;
-        this.savedScoreSpan.innerText = data.score;
-        this.savedDateSpan.innerText = data.date;
+        this.savedGenSpan.textContent = data.generation;
+        this.savedScoreSpan.textContent = data.score;
+        this.savedDateSpan.textContent = data.date;
       } else {
-        this.savedGenSpan.innerText = "?";
-        this.savedScoreSpan.innerText = "?";
-        this.savedDateSpan.innerText = "Old Save Format";
+        this.savedGenSpan.textContent = "?";
+        this.savedScoreSpan.textContent = "?";
+        this.savedDateSpan.textContent = "Old Save Format";
       }
-    } catch (e) {
+    } catch {
       this.savedStatsDiv.style.display = "none";
     }
   }
@@ -177,13 +174,13 @@ export class Game {
       date: new Date().toLocaleString(),
     };
 
-    localStorage.setItem("bestSnakeBrain", JSON.stringify(saveObject));
+    localStorage.setItem(Game.SAVE_KEY, JSON.stringify(saveObject));
     this.updateSavedStatsDisplay();
     this.showToast(`Saved Gen ${this.generation} Champion`);
   }
 
   loadBestSnake(silent: boolean = false) {
-    const raw = localStorage.getItem("bestSnakeBrain");
+    const raw = localStorage.getItem(Game.SAVE_KEY);
     if (!raw) {
       if (!silent) this.showToast("No save found");
       return;
@@ -194,21 +191,19 @@ export class Game {
       let loadedBrain: NeuralNetwork;
 
       if (data.brainData) {
-        if (typeof data.brainData === "string") {
-          loadedBrain = NeuralNetwork.deserialize(data.brainData);
-        } else {
-          loadedBrain = NeuralNetwork.restore(data.brainData);
-        }
+        loadedBrain = NeuralNetwork.restore(data.brainData);
+      } else if (data.brain) {
+        loadedBrain = NeuralNetwork.restore(data.brain);
       } else {
         loadedBrain = NeuralNetwork.deserialize(raw);
       }
 
       if (
-        loadedBrain.inputNodes !== 27 ||
-        loadedBrain.hiddenNodes !== 64 ||
-        loadedBrain.outputNodes !== 3
+        loadedBrain.inputNodes !== BRAIN_CONFIG.inputNodes ||
+        loadedBrain.hiddenNodes !== BRAIN_CONFIG.hiddenNodes ||
+        loadedBrain.outputNodes !== BRAIN_CONFIG.outputNodes
       ) {
-        localStorage.removeItem("bestSnakeBrain");
+        localStorage.removeItem(Game.SAVE_KEY);
         if (!silent) {
           this.showToast("Saved brain incompatible, starting fresh");
         }
@@ -225,7 +220,7 @@ export class Game {
       this.foods = [];
       this.generation = data.generation || 1;
       this.bestScore = data.score || 0;
-      this.highScoreGen = this.generation; // Sync high score gen
+      this.highScoreGen = this.generation;
       this.gensSinceImprovement = 0;
 
       const champion = new Snake(loadedBrain);
@@ -241,7 +236,8 @@ export class Game {
       if (!silent) this.showToast("Checkpoint Loaded");
     } catch (e) {
       console.error(e);
-      this.showToast("Load Failed");
+      if (!silent) this.showToast("Load Failed");
+      this.initAIGame();
     }
   }
 
@@ -251,42 +247,39 @@ export class Game {
 
   updateAI() {
     let allDead = true;
+    let currentBest = 0;
+    let bestSnakeInGen: Snake | null = null;
+    let aliveCount = 0;
 
     for (let i = 0; i < this.population.length; i++) {
       const snake = this.population[i];
       const food = this.foods[i];
 
-      if (snake.dead) continue;
-
-      allDead = false;
-      snake.think(food);
-      snake.move(food);
-
       if (!snake.dead) {
-        const head = snake.body[0];
-        if (head.x === food.position.x && head.y === food.position.y) {
-          snake.grow();
-          food.respawn(snake.bodySet);
-          snake.foodProgress = 0;
+        allDead = false;
+        snake.think(food);
+        snake.move(food);
+
+        if (!snake.dead) {
+          const head = snake.body[0];
+          if (head.x === food.position.x && head.y === food.position.y) {
+            snake.grow();
+            food.respawn(snake.bodySet);
+            snake.foodProgress = 0;
+          }
         }
       }
-    }
 
-    if (allDead) {
-      this.evolve();
-    }
-
-    let currentBest = 0;
-    let bestSnakeInGen: Snake | null = null;
-    let aliveCount = 0;
-
-    for (const snake of this.population) {
       if (!snake.dead) aliveCount++;
       const score = this.getScore(snake);
       if (score > currentBest) {
         currentBest = score;
         bestSnakeInGen = snake;
       }
+    }
+
+    if (allDead) {
+      this.evolve();
     }
 
     if (currentBest > this.bestScore && bestSnakeInGen) {
@@ -304,7 +297,14 @@ export class Game {
       this.lastStatus = status;
     }
 
-    this.scoreElement.innerHTML = `<strong>Best: ${this.bestScore}</strong><br>Gen: ${this.generation}<br>Alive: ${aliveCount}/${this.popSize}<br>Avg: ${this.averageScore.toFixed(1)}<br>Stale: ${this.gensSinceImprovement}<br>Mut: ${(this.currentMutationRate * 100).toFixed(0)}%<br>Status: ${status}`;
+    this.scoreElement.innerHTML =
+      `<strong>Best: ${this.bestScore}</strong><br>` +
+      `Gen: ${this.generation}<br>` +
+      `Alive: ${aliveCount}/${this.popSize}<br>` +
+      `Avg: ${this.averageScore.toFixed(1)}<br>` +
+      `Stale: ${this.gensSinceImprovement}<br>` +
+      `Mut: ${(this.currentMutationRate * 100).toFixed(0)}%<br>` +
+      `Status: ${status}`;
   }
 
   evolve() {
@@ -317,30 +317,26 @@ export class Game {
 
     this.averageScore = totalScore / this.population.length;
 
-    // Dynamic Mutation Logic
     const convergence =
       this.bestScore > 0 ? this.averageScore / this.bestScore : 0;
 
-    this.currentMutationRate = this.mutationRate; // Reset to base (0.05)
+    this.currentMutationRate = this.mutationRate;
 
     if (this.gensSinceImprovement > 100) {
-      this.currentMutationRate = 0.2; // Panic Mode
+      this.currentMutationRate = 0.2;
     } else if (this.gensSinceImprovement > 50) {
-      this.currentMutationRate = 0.1; // Hard Stuck
+      this.currentMutationRate = 0.1;
     } else if (this.gensSinceImprovement > 20 && convergence > 0.6) {
-      this.currentMutationRate = 0.1; // Converged early
+      this.currentMutationRate = 0.1;
     }
 
     const newPop: Snake[] = [];
-
-    // Keep a small elite set unchanged each generation to avoid losing good behaviors.
-    const elites = [...this.population].sort((a, b) => b.fitness - a.fitness);
     const eliteCount = Math.min(5, this.popSize);
-    for (let i = 0; i < eliteCount; i++) {
-      newPop.push(new Snake(elites[i].brain));
+    const elites = this.pickTopK(eliteCount);
+    for (const elite of elites) {
+      newPop.push(new Snake(elite.brain));
     }
 
-    // Add random "immigrants" to inject diversity and break local minima.
     let immigrantRate = 0.05;
     if (this.gensSinceImprovement > 100) immigrantRate = 0.2;
     else if (this.gensSinceImprovement > 50) immigrantRate = 0.1;
@@ -349,12 +345,10 @@ export class Game {
       Math.floor(this.popSize * immigrantRate),
       this.popSize - newPop.length,
     );
-
     for (let i = 0; i < immigrantCount; i++) {
       newPop.push(new Snake());
     }
 
-    // Lower selection pressure when stuck to preserve diversity.
     const tournamentSize = this.gensSinceImprovement > 50 ? 3 : 5;
     for (let i = newPop.length; i < this.popSize; i++) {
       const parentA = this.selectParentTournament(tournamentSize);
@@ -371,21 +365,40 @@ export class Game {
   }
 
   private selectParentTournament(k: number): Snake {
-    if (this.population.length === 0) {
-      throw new Error("Population is empty");
-    }
-
     const kk = Math.max(1, Math.floor(k));
     let best =
       this.population[Math.floor(Math.random() * this.population.length)];
-
     for (let i = 1; i < kk; i++) {
       const contender =
         this.population[Math.floor(Math.random() * this.population.length)];
       if (contender.fitness > best.fitness) best = contender;
     }
-
     return best;
+  }
+
+  private pickTopK(k: number): Snake[] {
+    if (k <= 0) return [];
+    const top: Snake[] = [];
+
+    for (const snake of this.population) {
+      if (top.length === 0) {
+        top.push(snake);
+        continue;
+      }
+
+      if (top.length < k) {
+        top.push(snake);
+        top.sort((a, b) => b.fitness - a.fitness);
+        continue;
+      }
+
+      if (snake.fitness > top[top.length - 1].fitness) {
+        top[top.length - 1] = snake;
+        top.sort((a, b) => b.fitness - a.fitness);
+      }
+    }
+
+    return top;
   }
 
   draw() {
@@ -394,8 +407,7 @@ export class Game {
 
     const champion = this.population[0];
     if (champion) {
-      const champScore = this.getScore(champion);
-      this.currentScoreElement.textContent = `Score: ${champScore}`;
+      this.currentScoreElement.textContent = `Score: ${champion.score}`;
     }
 
     if (this.showAll) {
@@ -416,18 +428,19 @@ export class Game {
           );
         }
       }
-    } else {
-      if (champion && !champion.dead) {
-        champion.draw(this.ctx, TILE_SIZE, "#4caf50");
-        const f = this.foods[0];
-        this.ctx.fillStyle = "#f44336";
-        this.ctx.fillRect(
-          f.position.x * TILE_SIZE,
-          f.position.y * TILE_SIZE,
-          TILE_SIZE,
-          TILE_SIZE,
-        );
-      }
+      return;
+    }
+
+    if (champion && !champion.dead) {
+      champion.draw(this.ctx, TILE_SIZE, "#4caf50");
+      const f = this.foods[0];
+      this.ctx.fillStyle = "#f44336";
+      this.ctx.fillRect(
+        f.position.x * TILE_SIZE,
+        f.position.y * TILE_SIZE,
+        TILE_SIZE,
+        TILE_SIZE,
+      );
     }
   }
 
@@ -440,7 +453,6 @@ export class Game {
 
     if (shouldTurbo) {
       const start = performance.now();
-      // Run for up to 12ms per frame to maintain 60fps UI responsiveness
       while (performance.now() - start < 12) {
         this.update();
         if (

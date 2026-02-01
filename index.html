@@ -11,11 +11,11 @@
         <canvas id="gameCanvas"></canvas>
         <div id="currentScore" class="current-score">Score: 0</div>
       </div>
-      
+
       <div class="sidebar">
         <div id="toast" class="toast"></div>
         <h1>Snake AI</h1>
-        
+
         <div class="stats-panel">
           <div id="score">Initialising...</div>
         </div>
@@ -23,22 +23,35 @@
         <div class="controls-panel">
           <div class="control-group">
             <div class="control-row">
-              <input type="checkbox" id="turboToggle">
+              <input type="checkbox" id="turboToggle" />
               <label for="turboToggle">Turbo Mode (500x)</label>
             </div>
             <div class="control-row">
-              <input type="checkbox" id="showAllToggle">
+              <input type="checkbox" id="showAllToggle" />
               <label for="showAllToggle">Show Entire Population</label>
             </div>
           </div>
 
           <div class="control-group" style="flex-direction: row; gap: 10px;">
-             <button id="resetBtn" style="flex: 1; padding: 5px; cursor: pointer;">Reset Best</button>
+            <button id="resetBtn" style="flex: 1; padding: 5px; cursor: pointer;">
+              Reset Best
+            </button>
           </div>
 
-          <div id="savedStats" style="font-size: 0.8rem; color: #888; margin-top: 10px; border-top: 1px solid #444; padding-top: 10px; display: none;">
-            <strong>Saved Champion:</strong><br>
-            Gen: <span id="savedGen">-</span> | Best Score: <span id="savedScore">-</span><br>
+          <div
+            id="savedStats"
+            style="
+              font-size: 0.8rem;
+              color: #888;
+              margin-top: 10px;
+              border-top: 1px solid #444;
+              padding-top: 10px;
+              display: none;
+            "
+          >
+            <strong>Saved Champion:</strong><br />
+            Gen: <span id="savedGen">-</span> | Best Score:
+            <span id="savedScore">-</span><br />
             <span id="savedDate" style="font-size: 0.7rem;"></span>
           </div>
         </div>
