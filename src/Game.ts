@@ -242,13 +242,14 @@ export class Game {
       if (!snake.dead) {
         allDead = false;
         snake.think(food);
-        snake.move();
+        snake.move(food);
 
         if (!snake.dead) {
           const head = snake.body[0];
           if (head.x === food.position.x && head.y === food.position.y) {
             snake.grow();
             food.respawn(snake.bodySet);
+            snake.foodProgress = 0;
           }
         }
       }

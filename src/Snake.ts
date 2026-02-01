@@ -14,6 +14,7 @@ export class Snake {
   lifetime: number = 0;
   fitness: number = 0;
   movesLeft: number = 500; // Limit moves to prevent infinite loops without eating
+  foodProgress: number = 0;
 
   bodySet: Set<number>;
   visionInputs: Float32Array;
@@ -219,11 +220,19 @@ export class Snake {
     }
   }
 
-  move() {
+  move(food?: Food) {
     if (this.dead) return;
 
     this.lifetime++;
     this.movesLeft--;
+
+    let prevFoodDist = 0;
+    if (food) {
+      const head = this.body[0];
+      prevFoodDist =
+        Math.abs(head.x - food.position.x) +
+        Math.abs(head.y - food.position.y);
+    }
 
     if (this.movesLeft < 0) {
       this.dead = true;
@@ -275,6 +284,19 @@ export class Snake {
     this.body.unshift(newHead);
     this.bodySet.add(newHead.y * GRID_WIDTH + newHead.x);
 
+    if (food && !this.dead) {
+      const newFoodDist =
+        Math.abs(newHead.x - food.position.x) +
+        Math.abs(newHead.y - food.position.y);
+      if (newFoodDist < prevFoodDist) {
+        this.foodProgress += 1;
+      } else if (newFoodDist > prevFoodDist) {
+        this.foodProgress = Math.max(0, this.foodProgress - 1);
+      } else {
+        this.foodProgress = Math.max(0, this.foodProgress - 0.25);
+      }
+    }
+
     if (!this.growPending) {
       const tail = this.body.pop();
       if (tail) {
@@ -319,13 +341,18 @@ export class Snake {
     const foodEaten = this.body.length - startLength;
 
     // If they haven't eaten, fitness is low.
+    const progressBonus = Math.floor(this.foodProgress);
+
     if (foodEaten < 1) {
       // Just lifetime, but capped so it doesn't overshadow eating.
-      this.fitness = Math.floor(this.lifetime / 10);
+      this.fitness = Math.floor(this.lifetime / 10) + progressBonus;
     } else {
       // Eaten at least once.
       // foodEaten^2 * 100 (Exponential reward) + lifetime
-      this.fitness = foodEaten * foodEaten * 100 + Math.floor(this.lifetime / 2);
+      this.fitness =
+        foodEaten * foodEaten * 100 +
+        Math.floor(this.lifetime / 10) +
+        progressBonus;
     }
   }
 
