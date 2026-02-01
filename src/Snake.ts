@@ -46,7 +46,7 @@ export class Snake {
     if (brain) {
       this.brain = brain.clone();
     } else {
-      this.brain = new NeuralNetwork(27, 24, 3);
+      this.brain = new NeuralNetwork(27, 64, 3);
     }
   }
 
@@ -184,6 +184,75 @@ export class Snake {
     return this.bodySet.has(pt.y * GRID_WIDTH + pt.x);
   }
 
+  private dirAfterAction(actionIndex: number): Direction {
+    // Actions: 0 = Straight, 1 = Left, 2 = Right
+    if (actionIndex === 0) return this.direction;
+
+    if (actionIndex === 1) {
+      // Turn Left
+      switch (this.direction) {
+        case Direction.Up:
+          return Direction.Left;
+        case Direction.Down:
+          return Direction.Right;
+        case Direction.Left:
+          return Direction.Down;
+        case Direction.Right:
+          return Direction.Up;
+      }
+    }
+
+    // Turn Right
+    switch (this.direction) {
+      case Direction.Up:
+        return Direction.Right;
+      case Direction.Down:
+        return Direction.Left;
+      case Direction.Left:
+        return Direction.Up;
+      case Direction.Right:
+        return Direction.Down;
+    }
+  }
+
+  private nextHeadForDirection(dir: Direction): Point {
+    const head = this.body[0];
+    switch (dir) {
+      case Direction.Up:
+        return { x: head.x, y: head.y - 1 };
+      case Direction.Down:
+        return { x: head.x, y: head.y + 1 };
+      case Direction.Left:
+        return { x: head.x - 1, y: head.y };
+      case Direction.Right:
+        return { x: head.x + 1, y: head.y };
+    }
+  }
+
+  private wouldCollide(nextDir: Direction): boolean {
+    const newHead = this.nextHeadForDirection(nextDir);
+
+    // Wall collision
+    if (
+      newHead.x < 0 ||
+      newHead.x >= GRID_WIDTH ||
+      newHead.y < 0 ||
+      newHead.y >= GRID_HEIGHT
+    ) {
+      return true;
+    }
+
+    // Self collision (same logic as move: ignore tail if not growing)
+    for (let i = 0; i < this.body.length; i++) {
+      if (!this.growPending && i === this.body.length - 1) continue;
+      if (newHead.x === this.body[i].x && newHead.y === this.body[i].y) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   think(food: Food) {
     const inputs = this.look(food);
     const outputs = this.brain.predict(inputs);
@@ -198,26 +267,24 @@ export class Snake {
       }
     }
 
-    if (maxIndex === 0) {
-      // Straight: Keep current direction
-      this.newDirection = this.direction;
-    } else if (maxIndex === 1) {
-      // Turn Left
-      switch (this.direction) {
-        case Direction.Up: this.newDirection = Direction.Left; break;
-        case Direction.Down: this.newDirection = Direction.Right; break;
-        case Direction.Left: this.newDirection = Direction.Down; break;
-        case Direction.Right: this.newDirection = Direction.Up; break;
+    // Action masking: if the preferred action would immediately die, pick the best safe action instead.
+    let chosenIndex = maxIndex;
+    const preferredDir = this.dirAfterAction(maxIndex);
+    if (this.wouldCollide(preferredDir)) {
+      let bestSafeIndex = -1;
+      let bestSafeVal = -Infinity;
+      for (let i = 0; i < outputs.length; i++) {
+        const dir = this.dirAfterAction(i);
+        if (this.wouldCollide(dir)) continue;
+        if (outputs[i] > bestSafeVal) {
+          bestSafeVal = outputs[i];
+          bestSafeIndex = i;
+        }
       }
-    } else if (maxIndex === 2) {
-      // Turn Right
-      switch (this.direction) {
-        case Direction.Up: this.newDirection = Direction.Right; break;
-        case Direction.Down: this.newDirection = Direction.Left; break;
-        case Direction.Left: this.newDirection = Direction.Up; break;
-        case Direction.Right: this.newDirection = Direction.Down; break;
-      }
+      if (bestSafeIndex !== -1) chosenIndex = bestSafeIndex;
     }
+
+    this.newDirection = this.dirAfterAction(chosenIndex);
   }
 
   move(food?: Food) {
@@ -289,12 +356,13 @@ export class Snake {
         Math.abs(newHead.x - food.position.x) +
         Math.abs(newHead.y - food.position.y);
       if (newFoodDist < prevFoodDist) {
-        this.foodProgress += 1;
+        this.foodProgress += 2;
       } else if (newFoodDist > prevFoodDist) {
-        this.foodProgress = Math.max(0, this.foodProgress - 1);
+        this.foodProgress = Math.max(0, this.foodProgress - 2);
       } else {
-        this.foodProgress = Math.max(0, this.foodProgress - 0.25);
+        this.foodProgress = Math.max(0, this.foodProgress - 0.5);
       }
+      if (this.foodProgress > 200) this.foodProgress = 200;
     }
 
     if (!this.growPending) {

@@ -14,6 +14,7 @@ export class Game {
   bestScore: number = 0;
 
   scoreElement: HTMLElement;
+  currentScoreElement: HTMLElement;
   lastTime: number;
   targetFPS: number = 60;
   turboMode: boolean = false;
@@ -28,6 +29,7 @@ export class Game {
   averageScore: number = 0;
   gensSinceImprovement: number = 0;
   highScoreGen: number = 1;
+  lastStatus: string = "";
 
   // UI
   turboToggle: HTMLInputElement;
@@ -46,6 +48,7 @@ export class Game {
     this.canvas = document.getElementById("gameCanvas") as HTMLCanvasElement;
     this.ctx = this.canvas.getContext("2d")!;
     this.scoreElement = document.getElementById("score")!;
+    this.currentScoreElement = document.getElementById("currentScore")!;
     this.turboToggle = document.getElementById(
       "turboToggle",
     ) as HTMLInputElement;
@@ -204,6 +207,24 @@ export class Game {
         loadedBrain = NeuralNetwork.deserialize(raw);
       }
 
+      if (
+        loadedBrain.inputNodes !== 27 ||
+        loadedBrain.hiddenNodes !== 64 ||
+        loadedBrain.outputNodes !== 3
+      ) {
+        localStorage.removeItem("bestSnakeBrain");
+        if (!silent) {
+          this.showToast("Saved brain incompatible, starting fresh");
+        }
+        this.bestScore = 0;
+        this.generation = 1;
+        this.highScoreGen = 1;
+        this.gensSinceImprovement = 0;
+        this.updateSavedStatsDisplay();
+        this.initAIGame();
+        return;
+      }
+
       this.population = [];
       this.foods = [];
       this.generation = data.generation || 1;
@@ -277,25 +298,31 @@ export class Game {
       this.saveBestSnake(bestSnakeInGen);
     }
 
-    this.scoreElement.innerHTML = `<strong>Best: ${this.bestScore}</strong><br>Gen: ${this.generation}<br>Alive: ${aliveCount}/${this.popSize}<br>Avg: ${this.averageScore.toFixed(1)}<br>Stale: ${this.gensSinceImprovement}<br>Mut: ${(this.currentMutationRate * 100).toFixed(0)}%`;
+    let status = "Improving";
+    if (this.bestScore <= 0) {
+      status = "Bootstrapping";
+    } else if (this.gensSinceImprovement >= 100) {
+      status = "Plateaued";
+    } else if (this.gensSinceImprovement >= 50) {
+      status = "Stuck";
+    } else if (this.gensSinceImprovement >= 20) {
+      status = "Slowing";
+    }
+
+    if (status !== this.lastStatus) {
+      if (status === "Plateaued") this.showToast("Status: Plateaued (no new best in 100 gens)");
+      this.lastStatus = status;
+    }
+
+    this.scoreElement.innerHTML = `<strong>Best: ${this.bestScore}</strong><br>Gen: ${this.generation}<br>Alive: ${aliveCount}/${this.popSize}<br>Avg: ${this.averageScore.toFixed(1)}<br>Stale: ${this.gensSinceImprovement}<br>Mut: ${(this.currentMutationRate * 100).toFixed(0)}%<br>Status: ${status}`;
   }
 
   evolve() {
-    let sumFitness = 0;
-    let maxFitness = 0;
-    let bestSnake: Snake = this.population[0];
-
     let totalScore = 0;
 
     for (const snake of this.population) {
       snake.calculateFitness();
-      sumFitness += snake.fitness;
       totalScore += snake.body.length - 3;
-
-      if (snake.fitness > maxFitness) {
-        maxFitness = snake.fitness;
-        bestSnake = snake;
-      }
     }
 
     this.averageScore = totalScore / this.population.length;
@@ -314,12 +341,30 @@ export class Game {
     }
 
     const newPop: Snake[] = [];
-    const champion = new Snake(bestSnake.brain);
-    newPop.push(champion);
+    // Keep a small elite set unchanged each generation to avoid losing good behaviors.
+    const elites = [...this.population].sort((a, b) => b.fitness - a.fitness);
+    const eliteCount = Math.min(5, this.popSize);
+    for (let i = 0; i < eliteCount; i++) {
+      newPop.push(new Snake(elites[i].brain));
+    }
 
-    for (let i = 1; i < this.popSize; i++) {
-      const parentA = this.selectParent(sumFitness);
-      const parentB = this.selectParent(sumFitness);
+    // Add random "immigrants" to inject diversity and break local minima.
+    let immigrantRate = 0.05;
+    if (this.gensSinceImprovement > 100) immigrantRate = 0.2;
+    else if (this.gensSinceImprovement > 50) immigrantRate = 0.1;
+    const immigrantCount = Math.min(
+      Math.floor(this.popSize * immigrantRate),
+      this.popSize - newPop.length,
+    );
+    for (let i = 0; i < immigrantCount; i++) {
+      newPop.push(new Snake());
+    }
+
+    // Lower selection pressure when stuck to preserve diversity.
+    const tournamentSize = this.gensSinceImprovement > 50 ? 3 : 5;
+    for (let i = newPop.length; i < this.popSize; i++) {
+      const parentA = this.selectParentTournament(tournamentSize);
+      const parentB = this.selectParentTournament(tournamentSize);
       const childBrain = parentA.brain.crossover(parentB.brain);
       childBrain.mutate(this.currentMutationRate);
       newPop.push(new Snake(childBrain));
@@ -331,7 +376,25 @@ export class Game {
     this.gensSinceImprovement = this.generation - this.highScoreGen;
   }
 
+  selectParentTournament(k: number): Snake {
+    if (this.population.length === 0) {
+      throw new Error("Population is empty");
+    }
+    const kk = Math.max(1, Math.floor(k));
+    let best =
+      this.population[Math.floor(Math.random() * this.population.length)];
+    for (let i = 1; i < kk; i++) {
+      const contender =
+        this.population[Math.floor(Math.random() * this.population.length)];
+      if (contender.fitness > best.fitness) best = contender;
+    }
+    return best;
+  }
+
   selectParent(sumFitness: number): Snake {
+    if (sumFitness <= 0) {
+      return this.population[Math.floor(Math.random() * this.population.length)];
+    }
     const r = Math.random() * sumFitness;
     let runningSum = 0;
     for (const snake of this.population) {
@@ -346,6 +409,12 @@ export class Game {
   draw() {
     this.ctx.fillStyle = "#000";
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+    const champion = this.population[0];
+    if (champion) {
+      const champScore = champion.body.length - 3;
+      this.currentScoreElement.textContent = `Score: ${champScore}`;
+    }
 
     if (this.showAll) {
       for (let i = 0; i < this.population.length; i++) {
@@ -366,7 +435,6 @@ export class Game {
         }
       }
     } else {
-      const champion = this.population[0];
       if (champion && !champion.dead) {
         champion.draw(this.ctx, TILE_SIZE, "#4caf50");
         const f = this.foods[0];
