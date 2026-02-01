@@ -1,4 +1,4 @@
-import { Point, GRID_WIDTH, GRID_HEIGHT } from './types';
+import { GRID_HEIGHT, GRID_WIDTH, Point } from "./types";
 
 export class Food {
   position: Point;
@@ -24,12 +24,12 @@ export class Food {
   }
 
   draw(ctx: CanvasRenderingContext2D, tileSize: number) {
-    ctx.fillStyle = '#f44336';
+    ctx.fillStyle = "#f44336";
     ctx.fillRect(
       this.position.x * tileSize,
       this.position.y * tileSize,
       tileSize,
-      tileSize
+      tileSize,
     );
   }
 }

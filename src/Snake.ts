@@ -1,8 +1,19 @@
-import { Point, Direction, GRID_WIDTH, GRID_HEIGHT } from "./types";
+import { Direction, GRID_HEIGHT, GRID_WIDTH, Point } from "./types";
 import { NeuralNetwork } from "./NeuralNetwork";
 import { Food } from "./Food";
 
 export class Snake {
+  private static readonly GLOBAL_DIRS: Point[] = [
+    { x: 0, y: -1 },
+    { x: 1, y: -1 },
+    { x: 1, y: 0 },
+    { x: 1, y: 1 },
+    { x: 0, y: 1 },
+    { x: -1, y: 1 },
+    { x: -1, y: 0 },
+    { x: -1, y: -1 },
+  ];
+
   body: Point[];
   direction: Direction;
   newDirection: Direction;
@@ -27,9 +38,10 @@ export class Snake {
       { x: startX - 1, y: startY },
       { x: startX - 2, y: startY },
     ];
+
     this.bodySet = new Set();
-    this.body.forEach(p => this.bodySet.add(p.y * GRID_WIDTH + p.x));
-    
+    this.body.forEach((p) => this.bodySet.add(p.y * GRID_WIDTH + p.x));
+
     // Pre-allocate input array to avoid GC
     this.visionInputs = new Float32Array(27);
 
@@ -39,9 +51,9 @@ export class Snake {
     this.dead = false;
 
     // Inputs:
-    // 24 inputs (8 directions * 3 types(wall, food, tail))
-    // + 2 inputs (Relative Food Vector: Forward, Right)
-    // + 1 input (Normalized Length: current/maxCells)
+    // 24 inputs (8 directions * 3 types: wall, food, tail)
+    // + 2 inputs (Relative food vector: forward, right)
+    // + 1 input (Normalized length: current/maxCells)
     // Total = 27 inputs
     if (brain) {
       this.brain = brain.clone();
@@ -52,6 +64,7 @@ export class Snake {
 
   setDirection(dir: Direction) {
     if (this.dead) return;
+
     // Prevent reversing direction
     if (
       (this.direction === Direction.Up && dir === Direction.Down) ||
@@ -61,6 +74,7 @@ export class Snake {
     ) {
       return;
     }
+
     this.newDirection = dir;
   }
 
@@ -68,37 +82,31 @@ export class Snake {
   look(food: Food) {
     const head = this.body[0];
 
-    // Standard 8 directions (Clockwise from Up)
-    const globalDirs = [
-      { x: 0, y: -1 },  // 0: Up
-      { x: 1, y: -1 },  // 1: Up-Right
-      { x: 1, y: 0 },   // 2: Right
-      { x: 1, y: 1 },   // 3: Down-Right
-      { x: 0, y: 1 },   // 4: Down
-      { x: -1, y: 1 },  // 5: Down-Left
-      { x: -1, y: 0 },  // 6: Left
-      { x: -1, y: -1 }  // 7: Up-Left
-    ];
-
     // Determine rotation index based on current heading
     // We want index 0 to be "Forward", index 2 to be "Right", etc.
     let startIndex = 0;
     switch (this.direction) {
-      case Direction.Up:    startIndex = 0; break;
-      case Direction.Right: startIndex = 2; break;
-      case Direction.Down:  startIndex = 4; break;
-      case Direction.Left:  startIndex = 6; break;
+      case Direction.Up:
+        startIndex = 0;
+        break;
+      case Direction.Right:
+        startIndex = 2;
+        break;
+      case Direction.Down:
+        startIndex = 4;
+        break;
+      case Direction.Left:
+        startIndex = 6;
+        break;
     }
 
     // 1. Raycasting Vision (8 Relative Directions)
     for (let i = 0; i < 8; i++) {
-      // Wrap around the globalDirs array
       const dirIndex = (startIndex + i) % 8;
-      this.lookInDirection(globalDirs[dirIndex], food, i * 3);
+      this.lookInDirection(Snake.GLOBAL_DIRS[dirIndex], food, i * 3);
     }
 
     // 2. Relative Food Vector (2 Inputs)
-    // Calculate food position relative to head
     const dx = food.position.x - head.x;
     const dy = food.position.y - head.y;
 
@@ -109,25 +117,24 @@ export class Snake {
     switch (this.direction) {
       case Direction.Up:
         forwardNorm = -dy / GRID_HEIGHT; // Forward is -y
-        rightNorm = dx / GRID_WIDTH;     // Right is +x
+        rightNorm = dx / GRID_WIDTH; // Right is +x
         break;
       case Direction.Right:
-        forwardNorm = dx / GRID_WIDTH;   // Forward is +x
-        rightNorm = dy / GRID_HEIGHT;    // Right is +y
+        forwardNorm = dx / GRID_WIDTH; // Forward is +x
+        rightNorm = dy / GRID_HEIGHT; // Right is +y
         break;
       case Direction.Down:
-        forwardNorm = dy / GRID_HEIGHT;  // Forward is +y
-        rightNorm = -dx / GRID_WIDTH;    // Right is -x
+        forwardNorm = dy / GRID_HEIGHT; // Forward is +y
+        rightNorm = -dx / GRID_WIDTH; // Right is -x
         break;
       case Direction.Left:
-        forwardNorm = -dx / GRID_WIDTH;  // Forward is -x
-        rightNorm = -dy / GRID_HEIGHT;   // Right is -y
+        forwardNorm = -dx / GRID_WIDTH; // Forward is -x
+        rightNorm = -dy / GRID_HEIGHT; // Right is -y
         break;
     }
 
-    const offsetFood = 24;
-    this.visionInputs[offsetFood] = forwardNorm;
-    this.visionInputs[offsetFood + 1] = rightNorm;
+    this.visionInputs[24] = forwardNorm;
+    this.visionInputs[25] = rightNorm;
 
     // 3. Normalized Length (1 Input)
     const maxCells = GRID_WIDTH * GRID_HEIGHT;
@@ -142,7 +149,7 @@ export class Snake {
     let pos = { x: head.x, y: head.y };
     let foundFood = false;
     let foundBody = false;
-    
+
     // Reset values
     this.visionInputs[offset] = 0;
     this.visionInputs[offset + 1] = 0;
@@ -153,15 +160,17 @@ export class Snake {
 
     // Move in direction until hit wall
     while (
-      pos.x >= 0 && pos.x < GRID_WIDTH &&
-      pos.y >= 0 && pos.y < GRID_HEIGHT
+      pos.x >= 0 &&
+      pos.x < GRID_WIDTH &&
+      pos.y >= 0 &&
+      pos.y < GRID_HEIGHT
     ) {
       // Manhattan distance: |dx| + |dy|
       const distance = Math.abs(pos.x - head.x) + Math.abs(pos.y - head.y);
-      
+
       // Check for food
       if (!foundFood && pos.x === food.position.x && pos.y === food.position.y) {
-        this.visionInputs[offset + 1] = 1 / distance; 
+        this.visionInputs[offset + 1] = 1 / distance;
         foundFood = true;
       }
 
@@ -307,23 +316,7 @@ export class Snake {
     }
 
     this.direction = this.newDirection;
-    const head = this.body[0];
-    let newHead: Point;
-
-    switch (this.direction) {
-      case Direction.Up:
-        newHead = { x: head.x, y: head.y - 1 };
-        break;
-      case Direction.Down:
-        newHead = { x: head.x, y: head.y + 1 };
-        break;
-      case Direction.Left:
-        newHead = { x: head.x - 1, y: head.y };
-        break;
-      case Direction.Right:
-        newHead = { x: head.x + 1, y: head.y };
-        break;
-    }
+    const newHead = this.nextHeadForDirection(this.direction);
 
     // Wall Collision
     if (
@@ -401,22 +394,16 @@ export class Snake {
   }
 
   calculateFitness() {
-    // New Fitness Formula
-    // 1. Reward Food Eaten heavily (exponential)
-    // 2. Reward Lifetime slightly (linear)
-
+    // 1. Reward food eaten heavily (exponential)
+    // 2. Reward lifetime slightly (linear)
     const startLength = 3;
     const foodEaten = this.body.length - startLength;
-
-    // If they haven't eaten, fitness is low.
     const progressBonus = Math.floor(this.foodProgress);
 
     if (foodEaten < 1) {
       // Just lifetime, but capped so it doesn't overshadow eating.
       this.fitness = Math.floor(this.lifetime / 10) + progressBonus;
     } else {
-      // Eaten at least once.
-      // foodEaten^2 * 100 (Exponential reward) + lifetime
       this.fitness =
         foodEaten * foodEaten * 100 +
         Math.floor(this.lifetime / 10) +

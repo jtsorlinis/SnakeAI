@@ -1,6 +1,6 @@
-import './style.css';
-import { Game } from './Game';
+import "./style.css";
+import { Game } from "./Game";
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener("DOMContentLoaded", () => {
   new Game();
 });

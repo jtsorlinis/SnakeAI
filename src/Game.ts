@@ -69,15 +69,27 @@ export class Game {
     this.lastTime = 0;
 
     if (localStorage.getItem("bestSnakeBrain")) {
-        this.loadBestSnake(true); // silent mode
+      this.loadBestSnake(true); // silent mode
     } else {
-        this.initAIGame();
+      this.initAIGame();
     }
 
     this.updateSavedStatsDisplay();
     this.setupInput();
     this.loop = this.loop.bind(this);
     requestAnimationFrame(this.loop);
+  }
+
+  private getScore(snake: Snake): number {
+    return snake.body.length - 3;
+  }
+
+  private getStatus(): string {
+    if (this.bestScore <= 0) return "Bootstrapping";
+    if (this.gensSinceImprovement >= 100) return "Plateaued";
+    if (this.gensSinceImprovement >= 50) return "Stuck";
+    if (this.gensSinceImprovement >= 20) return "Slowing";
+    return "Improving";
   }
 
   showToast(message: string) {
@@ -112,21 +124,21 @@ export class Game {
     });
 
     this.resetBtn.addEventListener("click", () => {
-        if(confirm("Are you sure you want to delete the best snake and restart?")) {
-            this.resetBestSnake();
-        }
+      if (confirm("Are you sure you want to delete the best snake and restart?")) {
+        this.resetBestSnake();
+      }
     });
   }
 
   resetBestSnake() {
-      localStorage.removeItem("bestSnakeBrain");
-      this.bestScore = 0;
-      this.generation = 1;
-      this.highScoreGen = 1;
-      this.gensSinceImprovement = 0;
-      this.updateSavedStatsDisplay();
-      this.initAIGame();
-      this.showToast("Progress Reset");
+    localStorage.removeItem("bestSnakeBrain");
+    this.bestScore = 0;
+    this.generation = 1;
+    this.highScoreGen = 1;
+    this.gensSinceImprovement = 0;
+    this.updateSavedStatsDisplay();
+    this.initAIGame();
+    this.showToast("Progress Reset");
   }
 
   updateSavedStatsDisplay() {
@@ -154,37 +166,21 @@ export class Game {
     }
   }
 
-    saveBestSnake(targetSnake?: Snake) {
+  saveBestSnake(targetSnake?: Snake) {
+    if (this.population.length === 0 && !targetSnake) return;
 
-      if (this.population.length === 0 && !targetSnake) return;
+    const champion = targetSnake || this.population[0];
+    const saveObject = {
+      brainData: champion.brain,
+      generation: this.generation,
+      score: this.bestScore,
+      date: new Date().toLocaleString(),
+    };
 
-      
-
-      const champion = targetSnake || this.population[0];
-
-      
-
-      const saveObject = {
-
-          brainData: champion.brain,
-
-          generation: this.generation,
-
-          score: this.bestScore,
-
-          date: new Date().toLocaleString()
-
-      };
-
-  
-
-      localStorage.setItem('bestSnakeBrain', JSON.stringify(saveObject));
-
-      this.updateSavedStatsDisplay();
-
-      this.showToast(`Saved Gen ${this.generation} Champion`);
-
-    }
+    localStorage.setItem("bestSnakeBrain", JSON.stringify(saveObject));
+    this.updateSavedStatsDisplay();
+    this.showToast(`Saved Gen ${this.generation} Champion`);
+  }
 
   loadBestSnake(silent: boolean = false) {
     const raw = localStorage.getItem("bestSnakeBrain");
@@ -260,18 +256,18 @@ export class Game {
       const snake = this.population[i];
       const food = this.foods[i];
 
-      if (!snake.dead) {
-        allDead = false;
-        snake.think(food);
-        snake.move(food);
+      if (snake.dead) continue;
 
-        if (!snake.dead) {
-          const head = snake.body[0];
-          if (head.x === food.position.x && head.y === food.position.y) {
-            snake.grow();
-            food.respawn(snake.bodySet);
-            snake.foodProgress = 0;
-          }
+      allDead = false;
+      snake.think(food);
+      snake.move(food);
+
+      if (!snake.dead) {
+        const head = snake.body[0];
+        if (head.x === food.position.x && head.y === food.position.y) {
+          snake.grow();
+          food.respawn(snake.bodySet);
+          snake.foodProgress = 0;
         }
       }
     }
@@ -283,14 +279,16 @@ export class Game {
     let currentBest = 0;
     let bestSnakeInGen: Snake | null = null;
     let aliveCount = 0;
-    for(let s of this.population) {
-        if(!s.dead) aliveCount++;
-        const score = s.body.length - 3;
-        if(score > currentBest) {
-            currentBest = score;
-            bestSnakeInGen = s;
-        }
+
+    for (const snake of this.population) {
+      if (!snake.dead) aliveCount++;
+      const score = this.getScore(snake);
+      if (score > currentBest) {
+        currentBest = score;
+        bestSnakeInGen = snake;
+      }
     }
+
     if (currentBest > this.bestScore && bestSnakeInGen) {
       this.bestScore = currentBest;
       this.highScoreGen = this.generation;
@@ -298,19 +296,11 @@ export class Game {
       this.saveBestSnake(bestSnakeInGen);
     }
 
-    let status = "Improving";
-    if (this.bestScore <= 0) {
-      status = "Bootstrapping";
-    } else if (this.gensSinceImprovement >= 100) {
-      status = "Plateaued";
-    } else if (this.gensSinceImprovement >= 50) {
-      status = "Stuck";
-    } else if (this.gensSinceImprovement >= 20) {
-      status = "Slowing";
-    }
-
+    const status = this.getStatus();
     if (status !== this.lastStatus) {
-      if (status === "Plateaued") this.showToast("Status: Plateaued (no new best in 100 gens)");
+      if (status === "Plateaued") {
+        this.showToast("Status: Plateaued (no new best in 100 gens)");
+      }
       this.lastStatus = status;
     }
 
@@ -322,25 +312,27 @@ export class Game {
 
     for (const snake of this.population) {
       snake.calculateFitness();
-      totalScore += snake.body.length - 3;
+      totalScore += this.getScore(snake);
     }
 
     this.averageScore = totalScore / this.population.length;
 
     // Dynamic Mutation Logic
-    const convergence = this.bestScore > 0 ? this.averageScore / this.bestScore : 0;
-    
+    const convergence =
+      this.bestScore > 0 ? this.averageScore / this.bestScore : 0;
+
     this.currentMutationRate = this.mutationRate; // Reset to base (0.05)
-    
+
     if (this.gensSinceImprovement > 100) {
-        this.currentMutationRate = 0.2; // Panic Mode
+      this.currentMutationRate = 0.2; // Panic Mode
     } else if (this.gensSinceImprovement > 50) {
-        this.currentMutationRate = 0.1; // Hard Stuck
+      this.currentMutationRate = 0.1; // Hard Stuck
     } else if (this.gensSinceImprovement > 20 && convergence > 0.6) {
-        this.currentMutationRate = 0.1; // Converged early
+      this.currentMutationRate = 0.1; // Converged early
     }
 
     const newPop: Snake[] = [];
+
     // Keep a small elite set unchanged each generation to avoid losing good behaviors.
     const elites = [...this.population].sort((a, b) => b.fitness - a.fitness);
     const eliteCount = Math.min(5, this.popSize);
@@ -352,10 +344,12 @@ export class Game {
     let immigrantRate = 0.05;
     if (this.gensSinceImprovement > 100) immigrantRate = 0.2;
     else if (this.gensSinceImprovement > 50) immigrantRate = 0.1;
+
     const immigrantCount = Math.min(
       Math.floor(this.popSize * immigrantRate),
       this.popSize - newPop.length,
     );
+
     for (let i = 0; i < immigrantCount; i++) {
       newPop.push(new Snake());
     }
@@ -376,34 +370,22 @@ export class Game {
     this.gensSinceImprovement = this.generation - this.highScoreGen;
   }
 
-  selectParentTournament(k: number): Snake {
+  private selectParentTournament(k: number): Snake {
     if (this.population.length === 0) {
       throw new Error("Population is empty");
     }
+
     const kk = Math.max(1, Math.floor(k));
     let best =
       this.population[Math.floor(Math.random() * this.population.length)];
+
     for (let i = 1; i < kk; i++) {
       const contender =
         this.population[Math.floor(Math.random() * this.population.length)];
       if (contender.fitness > best.fitness) best = contender;
     }
-    return best;
-  }
 
-  selectParent(sumFitness: number): Snake {
-    if (sumFitness <= 0) {
-      return this.population[Math.floor(Math.random() * this.population.length)];
-    }
-    const r = Math.random() * sumFitness;
-    let runningSum = 0;
-    for (const snake of this.population) {
-      runningSum += snake.fitness;
-      if (runningSum > r) {
-        return snake;
-      }
-    }
-    return this.population[this.population.length - 1];
+    return best;
   }
 
   draw() {
@@ -412,7 +394,7 @@ export class Game {
 
     const champion = this.population[0];
     if (champion) {
-      const champScore = champion.body.length - 3;
+      const champScore = this.getScore(champion);
       this.currentScoreElement.textContent = `Score: ${champScore}`;
     }
 

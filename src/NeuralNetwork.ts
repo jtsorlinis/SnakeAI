@@ -2,13 +2,13 @@ export class NeuralNetwork {
   inputNodes: number;
   hiddenNodes: number;
   outputNodes: number;
-  
+
   weightsIH: Float32Array; // Size: hidden * input
   weightsHO: Float32Array; // Size: output * hidden
   biasH: Float32Array;
   biasO: Float32Array;
-  
-  // Reuse buffers to avoid GC
+
+  // Reuse buffers to avoid GC.
   private hiddenBuffer: Float32Array;
   private outputBuffer: Float32Array;
 
@@ -21,7 +21,7 @@ export class NeuralNetwork {
     this.weightsHO = new Float32Array(outputNodes * hiddenNodes);
     this.biasH = new Float32Array(hiddenNodes);
     this.biasO = new Float32Array(outputNodes);
-    
+
     this.hiddenBuffer = new Float32Array(hiddenNodes);
     this.outputBuffer = new Float32Array(outputNodes);
 
@@ -29,15 +29,22 @@ export class NeuralNetwork {
   }
 
   randomize() {
-    for (let i = 0; i < this.weightsIH.length; i++) this.weightsIH[i] = Math.random() * 2 - 1;
-    for (let i = 0; i < this.weightsHO.length; i++) this.weightsHO[i] = Math.random() * 2 - 1;
-    for (let i = 0; i < this.biasH.length; i++) this.biasH[i] = Math.random() * 2 - 1;
-    for (let i = 0; i < this.biasO.length; i++) this.biasO[i] = Math.random() * 2 - 1;
+    for (let i = 0; i < this.weightsIH.length; i++) {
+      this.weightsIH[i] = Math.random() * 2 - 1;
+    }
+    for (let i = 0; i < this.weightsHO.length; i++) {
+      this.weightsHO[i] = Math.random() * 2 - 1;
+    }
+    for (let i = 0; i < this.biasH.length; i++) {
+      this.biasH[i] = Math.random() * 2 - 1;
+    }
+    for (let i = 0; i < this.biasO.length; i++) {
+      this.biasO[i] = Math.random() * 2 - 1;
+    }
   }
 
   predict(inputs: number[] | Float32Array): Float32Array {
     // Input -> Hidden
-    // Weights stored as [HiddenNode0_Inputs, HiddenNode1_Inputs...] for contiguous access
     for (let i = 0; i < this.hiddenNodes; i++) {
       let sum = 0;
       const offset = i * this.inputNodes;
@@ -45,7 +52,6 @@ export class NeuralNetwork {
         sum += inputs[j] * this.weightsIH[offset + j];
       }
       sum += this.biasH[i];
-      // Inline Sigmoid: 1 / (1 + Math.exp(-x))
       this.hiddenBuffer[i] = 1 / (1 + Math.exp(-sum));
     }
 
@@ -65,12 +71,13 @@ export class NeuralNetwork {
 
   mutate(rate: number) {
     const mutateArr = (arr: Float32Array) => {
-        for (let i = 0; i < arr.length; i++) {
-            if (Math.random() < rate) {
-                arr[i] += (Math.random() * 2 - 1) * 0.5;
-            }
+      for (let i = 0; i < arr.length; i++) {
+        if (Math.random() < rate) {
+          arr[i] += (Math.random() * 2 - 1) * 0.5;
         }
-    }
+      }
+    };
+
     mutateArr(this.weightsIH);
     mutateArr(this.weightsHO);
     mutateArr(this.biasH);
@@ -78,15 +85,22 @@ export class NeuralNetwork {
   }
 
   crossover(partner: NeuralNetwork): NeuralNetwork {
-    const child = new NeuralNetwork(this.inputNodes, this.hiddenNodes, this.outputNodes);
-    
-    const crossoverArr = (childArr: Float32Array, myArr: Float32Array, partnerArr: Float32Array) => {
-        const midpoint = Math.floor(Math.random() * myArr.length);
-        for(let i=0; i<myArr.length; i++) {
-            if (i < midpoint) childArr[i] = myArr[i];
-            else childArr[i] = partnerArr[i];
-        }
-    }
+    const child = new NeuralNetwork(
+      this.inputNodes,
+      this.hiddenNodes,
+      this.outputNodes,
+    );
+
+    const crossoverArr = (
+      childArr: Float32Array,
+      myArr: Float32Array,
+      partnerArr: Float32Array,
+    ) => {
+      const midpoint = Math.floor(Math.random() * myArr.length);
+      for (let i = 0; i < myArr.length; i++) {
+        childArr[i] = i < midpoint ? myArr[i] : partnerArr[i];
+      }
+    };
 
     crossoverArr(child.weightsIH, this.weightsIH, partner.weightsIH);
     crossoverArr(child.weightsHO, this.weightsHO, partner.weightsHO);
@@ -95,75 +109,45 @@ export class NeuralNetwork {
 
     return child;
   }
-  
+
   clone(): NeuralNetwork {
-    const clone = new NeuralNetwork(this.inputNodes, this.hiddenNodes, this.outputNodes);
+    const clone = new NeuralNetwork(
+      this.inputNodes,
+      this.hiddenNodes,
+      this.outputNodes,
+    );
     clone.weightsIH.set(this.weightsIH);
     clone.weightsHO.set(this.weightsHO);
     clone.biasH.set(this.biasH);
     clone.biasO.set(this.biasO);
     return clone;
   }
-  
-  // Custom JSON serialization for TypedArrays
+
+  // Custom JSON serialization for TypedArrays.
   toJSON() {
-      return {
-          inputNodes: this.inputNodes,
-          hiddenNodes: this.hiddenNodes,
-          outputNodes: this.outputNodes,
-          weightsIH: Array.from(this.weightsIH),
-          weightsHO: Array.from(this.weightsHO),
-          biasH: Array.from(this.biasH),
-          biasO: Array.from(this.biasO)
-      };
+    return {
+      inputNodes: this.inputNodes,
+      hiddenNodes: this.hiddenNodes,
+      outputNodes: this.outputNodes,
+      weightsIH: Array.from(this.weightsIH),
+      weightsHO: Array.from(this.weightsHO),
+      biasH: Array.from(this.biasH),
+      biasO: Array.from(this.biasO),
+    };
   }
 
   static restore(obj: any): NeuralNetwork {
     const nn = new NeuralNetwork(obj.inputNodes, obj.hiddenNodes, obj.outputNodes);
-    
-    // Handle both legacy (array of arrays) and new (flat array) formats
-    if (obj.weightsIH[0] && Array.isArray(obj.weightsIH[0])) {
-       // Convert Legacy Format
-       // Legacy weightsIH was [Input][Hidden] (I rows, H cols)
-       // New format is [HiddenNode0_Inputs...] (H rows, I cols) - effectively transposed storage logic
-       // wait, let's check old loop:
-       // old predict: sum += inputs[j] * this.weightsIH[j][i]; (j=input index, i=hidden index)
-       // So old format was [InputIndex][HiddenIndex]
-       
-       // We want to store as: [HiddenIndex][InputIndex] (flattened)
-       // Index = h * inputNodes + i
-       
-       for (let h = 0; h < nn.hiddenNodes; h++) {
-           for (let i = 0; i < nn.inputNodes; i++) {
-               nn.weightsIH[h * nn.inputNodes + i] = obj.weightsIH[i][h];
-           }
-       }
-       
-       // Legacy weightsHO was [Hidden][Output]
-       // sum += hidden[j] * this.weightsHO[j][i]; (j=hidden, i=output)
-       // New format: [Output][Hidden]
-       // Index = o * hiddenNodes + h
-       for (let o = 0; o < nn.outputNodes; o++) {
-           for (let h = 0; h < nn.hiddenNodes; h++) {
-               nn.weightsHO[o * nn.hiddenNodes + h] = obj.weightsHO[h][o];
-           }
-       }
-       
-       nn.biasH.set(obj.biasH);
-       nn.biasO.set(obj.biasO);
-       
-    } else {
-       // New Flat Format (or restored from JSON which makes arrays)
-       nn.weightsIH.set(obj.weightsIH);
-       nn.weightsHO.set(obj.weightsHO);
-       nn.biasH.set(obj.biasH);
-       nn.biasO.set(obj.biasO);
-    }
-    
+
+    nn.weightsIH.set(obj.weightsIH);
+    nn.weightsHO.set(obj.weightsHO);
+    nn.biasH.set(obj.biasH);
+    nn.biasO.set(obj.biasO);
+
     return nn;
   }
-  
+
   static deserialize(data: string): NeuralNetwork {
-      return NeuralNetwork.restore(JSON.parse(data));
+    return NeuralNetwork.restore(JSON.parse(data));
   }
 }
