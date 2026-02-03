@@ -265,7 +265,6 @@ export class Game {
           if (head.x === food.position.x && head.y === food.position.y) {
             snake.grow();
             food.respawn(snake.bodySet);
-            snake.foodProgress = 0;
           }
         }
       }

@@ -8,6 +8,8 @@ export const BRAIN_CONFIG = {
   outputNodes: 3,
 };
 
+const MAX_STEPS_WITHOUT_FOOD = GRID_WIDTH * GRID_HEIGHT;
+
 export class Snake {
   body: Point[];
   direction: Direction;
@@ -16,10 +18,8 @@ export class Snake {
   dead: boolean;
 
   brain: NeuralNetwork;
-  lifetime: number = 0;
   fitness: number = 0;
-  movesLeft: number = 500;
-  foodProgress: number = 0;
+  maxStepsWithoutFood: number = MAX_STEPS_WITHOUT_FOOD;
 
   bodySet: Set<number>;
   visionInputs: Float32Array;
@@ -244,18 +244,9 @@ export class Snake {
   move(food?: Food) {
     if (this.dead) return;
 
-    this.lifetime++;
-    this.movesLeft--;
+    this.maxStepsWithoutFood--;
 
-    let prevFoodDist = 0;
-    if (food) {
-      const head = this.body[0];
-      prevFoodDist =
-        Math.abs(head.x - food.position.x) +
-        Math.abs(head.y - food.position.y);
-    }
-
-    if (this.movesLeft < 0) {
+    if (this.maxStepsWithoutFood < 0) {
       this.dead = true;
       return;
     }
@@ -284,20 +275,6 @@ export class Snake {
     this.body.unshift(newHead);
     this.bodySet.add(newHead.y * GRID_WIDTH + newHead.x);
 
-    if (food && !this.dead) {
-      const newFoodDist =
-        Math.abs(newHead.x - food.position.x) +
-        Math.abs(newHead.y - food.position.y);
-      if (newFoodDist < prevFoodDist) {
-        this.foodProgress += 2;
-      } else if (newFoodDist > prevFoodDist) {
-        this.foodProgress = Math.max(0, this.foodProgress - 2);
-      } else {
-        this.foodProgress = Math.max(0, this.foodProgress - 0.5);
-      }
-      if (this.foodProgress > 200) this.foodProgress = 200;
-    }
-
     if (!this.growPending) {
       const tail = this.body.pop();
       if (tail) {
@@ -305,8 +282,7 @@ export class Snake {
       }
     } else {
       this.growPending = false;
-      this.movesLeft += 1000;
-      if (this.movesLeft > 5000) this.movesLeft = 5000;
+      this.maxStepsWithoutFood = MAX_STEPS_WITHOUT_FOOD;
     }
   }
 
@@ -329,17 +305,7 @@ export class Snake {
   }
 
   calculateFitness() {
-    const foodEaten = this.score;
-    const progressBonus = Math.floor(this.foodProgress);
-
-    if (foodEaten < 1) {
-      this.fitness = Math.floor(this.lifetime / 10) + progressBonus;
-    } else {
-      this.fitness =
-        foodEaten * foodEaten * 100 +
-        Math.floor(this.lifetime / 10) +
-        progressBonus;
-    }
+    this.fitness = this.score;
   }
 
   mutate(rate: number) {
