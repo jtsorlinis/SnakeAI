@@ -3,23 +3,12 @@ import { NeuralNetwork } from "./NeuralNetwork";
 import { Food } from "./Food";
 
 export const BRAIN_CONFIG = {
-  inputNodes: 27,
+  inputNodes: 11,
   hiddenNodes: 64,
   outputNodes: 3,
 };
 
 export class Snake {
-  private static readonly GLOBAL_DIRS: Point[] = [
-    { x: 0, y: -1 },
-    { x: 1, y: -1 },
-    { x: 1, y: 0 },
-    { x: 1, y: 1 },
-    { x: 0, y: 1 },
-    { x: -1, y: 1 },
-    { x: -1, y: 0 },
-    { x: -1, y: -1 },
-  ];
-
   body: Point[];
   direction: Direction;
   newDirection: Direction;
@@ -84,73 +73,55 @@ export class Snake {
   look(food: Food) {
     const head = this.body[0];
 
-    let startIndex = 0;
-    switch (this.direction) {
-      case Direction.Up:
-        startIndex = 0;
-        break;
-      case Direction.Right:
-        startIndex = 2;
-        break;
-      case Direction.Down:
-        startIndex = 4;
-        break;
-      case Direction.Left:
-        startIndex = 6;
-        break;
-    }
+    const { front, left, right } = this.getRelativeDirections();
 
-    for (let i = 0; i < 8; i++) {
-      const dirIndex = (startIndex + i) % 8;
-      this.lookInDirection(Snake.GLOBAL_DIRS[dirIndex], food, i * 3);
-    }
+    this.visionInputs[0] = this.isBlocked(this.nextHeadForDirection(front)) ? 1 : 0;
+    this.visionInputs[1] = this.isBlocked(this.nextHeadForDirection(left)) ? 1 : 0;
+    this.visionInputs[2] = this.isBlocked(this.nextHeadForDirection(right)) ? 1 : 0;
 
-    const dx = food.position.x - head.x;
-    const dy = food.position.y - head.y;
+    this.visionInputs[3] = this.tailDistanceInput(front);
+    this.visionInputs[4] = this.tailDistanceInput(left);
+    this.visionInputs[5] = this.tailDistanceInput(right);
 
-    let forwardNorm = 0;
-    let rightNorm = 0;
+    this.visionInputs[6] = food.position.x > head.x ? 1 : 0;
+    this.visionInputs[7] = food.position.y > head.y ? 1 : 0;
 
-    switch (this.direction) {
-      case Direction.Up:
-        forwardNorm = -dy / GRID_HEIGHT;
-        rightNorm = dx / GRID_WIDTH;
-        break;
-      case Direction.Right:
-        forwardNorm = dx / GRID_WIDTH;
-        rightNorm = dy / GRID_HEIGHT;
-        break;
-      case Direction.Down:
-        forwardNorm = dy / GRID_HEIGHT;
-        rightNorm = -dx / GRID_WIDTH;
-        break;
-      case Direction.Left:
-        forwardNorm = -dx / GRID_WIDTH;
-        rightNorm = -dy / GRID_HEIGHT;
-        break;
-    }
-
-    this.visionInputs[24] = forwardNorm;
-    this.visionInputs[25] = rightNorm;
-
-    const maxCells = GRID_WIDTH * GRID_HEIGHT;
-    this.visionInputs[26] = this.body.length / maxCells;
+    this.visionInputs[8] = this.direction === Direction.Up ? 1 : 0;
+    this.visionInputs[9] = this.direction === Direction.Right ? 1 : 0;
+    this.visionInputs[10] = this.direction === Direction.Down ? 1 : 0;
 
     return this.visionInputs;
   }
 
-  lookInDirection(dir: Point, food: Food, offset: number) {
+  isOnBody(pt: Point): boolean {
+    return this.bodySet.has(pt.y * GRID_WIDTH + pt.x);
+  }
+
+  private isBlocked(pt: Point): boolean {
+    if (
+      pt.x < 0 ||
+      pt.x >= GRID_WIDTH ||
+      pt.y < 0 ||
+      pt.y >= GRID_HEIGHT
+    ) {
+      return true;
+    }
+
+    if (!this.isOnBody(pt)) return false;
+
+    if (!this.growPending) {
+      const tail = this.body[this.body.length - 1];
+      if (pt.x === tail.x && pt.y === tail.y) return false;
+    }
+
+    return true;
+  }
+
+  private tailDistanceInput(dir: Direction): number {
+    const step = this.deltaForDirection(dir);
     const head = this.body[0];
-    let pos = { x: head.x, y: head.y };
-    let foundFood = false;
-    let foundBody = false;
-
-    this.visionInputs[offset] = 0;
-    this.visionInputs[offset + 1] = 0;
-    this.visionInputs[offset + 2] = 0;
-
-    pos.x += dir.x;
-    pos.y += dir.y;
+    let pos = { x: head.x + step.x, y: head.y + step.y };
+    let distance = 1;
 
     while (
       pos.x >= 0 &&
@@ -158,28 +129,58 @@ export class Snake {
       pos.y >= 0 &&
       pos.y < GRID_HEIGHT
     ) {
-      const distance = Math.abs(pos.x - head.x) + Math.abs(pos.y - head.y);
-
-      if (!foundFood && pos.x === food.position.x && pos.y === food.position.y) {
-        this.visionInputs[offset + 1] = 1 / distance;
-        foundFood = true;
+      if (this.isOnBody(pos)) {
+        if (!this.growPending) {
+          const tail = this.body[this.body.length - 1];
+          if (pos.x === tail.x && pos.y === tail.y) {
+            pos.x += step.x;
+            pos.y += step.y;
+            distance++;
+            continue;
+          }
+        }
+        return 1 / distance;
       }
-
-      if (!foundBody && this.isOnBody(pos)) {
-        this.visionInputs[offset + 2] = 1 / distance;
-        foundBody = true;
-      }
-
-      pos.x += dir.x;
-      pos.y += dir.y;
+      pos.x += step.x;
+      pos.y += step.y;
+      distance++;
     }
 
-    const wallDistance = Math.abs(pos.x - head.x) + Math.abs(pos.y - head.y);
-    this.visionInputs[offset] = 1 / wallDistance;
+    return 0;
   }
 
-  isOnBody(pt: Point): boolean {
-    return this.bodySet.has(pt.y * GRID_WIDTH + pt.x);
+  private deltaForDirection(dir: Direction): Point {
+    switch (dir) {
+      case Direction.Up:
+        return { x: 0, y: -1 };
+      case Direction.Down:
+        return { x: 0, y: 1 };
+      case Direction.Left:
+        return { x: -1, y: 0 };
+      case Direction.Right:
+        return { x: 1, y: 0 };
+      default:
+        return { x: 0, y: 0 };
+    }
+  }
+
+  private getRelativeDirections(): {
+    front: Direction;
+    left: Direction;
+    right: Direction;
+  } {
+    switch (this.direction) {
+      case Direction.Up:
+        return { front: Direction.Up, left: Direction.Left, right: Direction.Right };
+      case Direction.Right:
+        return { front: Direction.Right, left: Direction.Up, right: Direction.Down };
+      case Direction.Down:
+        return { front: Direction.Down, left: Direction.Right, right: Direction.Left };
+      case Direction.Left:
+        return { front: Direction.Left, left: Direction.Down, right: Direction.Up };
+      default:
+        return { front: Direction.Up, left: Direction.Left, right: Direction.Right };
+    }
   }
 
   private dirAfterAction(actionIndex: number): Direction {
