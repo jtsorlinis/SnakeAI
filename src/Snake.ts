@@ -8,6 +8,8 @@ export const BRAIN_CONFIG = {
   outputNodes: 3,
 };
 
+export const WIN_REWARD = 1000;
+
 const MAX_STEPS_WITHOUT_FOOD = GRID_WIDTH * GRID_HEIGHT;
 
 export class Snake {
@@ -16,6 +18,7 @@ export class Snake {
   newDirection: Direction;
   growPending: boolean;
   dead: boolean;
+  won: boolean;
 
   brain: NeuralNetwork;
   fitness: number = 0;
@@ -41,6 +44,7 @@ export class Snake {
     this.newDirection = Direction.Right;
     this.growPending = false;
     this.dead = false;
+    this.won = false;
 
     if (brain) {
       this.brain = brain.clone();
@@ -305,7 +309,7 @@ export class Snake {
   }
 
   calculateFitness() {
-    this.fitness = this.score;
+    this.fitness = this.score + (this.won ? WIN_REWARD : 0);
   }
 
   mutate(rate: number) {

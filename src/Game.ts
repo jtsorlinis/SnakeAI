@@ -1,7 +1,13 @@
-import { Snake, BRAIN_CONFIG } from "./Snake";
+import { Snake, BRAIN_CONFIG, WIN_REWARD } from "./Snake";
 import { Food } from "./Food";
 import { NeuralNetwork } from "./NeuralNetwork";
-import { TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from "./types";
+import {
+  TILE_SIZE,
+  CANVAS_WIDTH,
+  CANVAS_HEIGHT,
+  GRID_WIDTH,
+  GRID_HEIGHT,
+} from "./types";
 
 export class Game {
   private static readonly SAVE_KEY = "bestSnakeBrain";
@@ -121,7 +127,9 @@ export class Game {
     });
 
     this.resetBtn.addEventListener("click", () => {
-      if (confirm("Are you sure you want to delete the best snake and restart?")) {
+      if (
+        confirm("Are you sure you want to delete the best snake and restart?")
+      ) {
         this.resetBestSnake();
       }
     });
@@ -250,6 +258,7 @@ export class Game {
     let currentBest = 0;
     let bestSnakeInGen: Snake | null = null;
     let aliveCount = 0;
+    const maxCells = GRID_WIDTH * GRID_HEIGHT;
 
     for (let i = 0; i < this.population.length; i++) {
       const snake = this.population[i];
@@ -263,8 +272,14 @@ export class Game {
         if (!snake.dead) {
           const head = snake.body[0];
           if (head.x === food.position.x && head.y === food.position.y) {
+            const willFillBoard = snake.body.length + 1 >= maxCells;
             snake.grow();
-            food.respawn(snake.bodySet);
+            if (willFillBoard) {
+              snake.won = true;
+              snake.dead = true;
+            } else {
+              food.respawn(snake.bodySet);
+            }
           }
         }
       }
@@ -296,6 +311,9 @@ export class Game {
       this.lastStatus = status;
     }
 
+    const convergence =
+      this.bestScore > 0 ? this.averageScore / this.bestScore : 0;
+
     this.scoreElement.innerHTML =
       `<strong>Best: ${this.bestScore}</strong><br>` +
       `Gen: ${this.generation}<br>` +
@@ -303,7 +321,7 @@ export class Game {
       `Avg: ${this.averageScore.toFixed(1)}<br>` +
       `Stale: ${this.gensSinceImprovement}<br>` +
       `Mut: ${(this.currentMutationRate * 100).toFixed(0)}%<br>` +
-      `Status: ${status}`;
+      `Convergence: ${convergence.toFixed(2)}`;
   }
 
   evolve() {
