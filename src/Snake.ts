@@ -4,7 +4,7 @@ import { Food } from "./Food";
 
 export const BRAIN_CONFIG = {
   inputNodes: 11,
-  hiddenNodes: 64,
+  hiddenNodes: 10,
   outputNodes: 3,
 };
 
@@ -23,6 +23,7 @@ export class Snake {
   brain: NeuralNetwork;
   fitness: number = 0;
   maxStepsWithoutFood: number = MAX_STEPS_WITHOUT_FOOD;
+  moves: number = 0;
 
   bodySet: Set<number>;
   visionInputs: Float32Array;
@@ -79,9 +80,15 @@ export class Snake {
 
     const { front, left, right } = this.getRelativeDirections();
 
-    this.visionInputs[0] = this.isBlocked(this.nextHeadForDirection(front)) ? 1 : 0;
-    this.visionInputs[1] = this.isBlocked(this.nextHeadForDirection(left)) ? 1 : 0;
-    this.visionInputs[2] = this.isBlocked(this.nextHeadForDirection(right)) ? 1 : 0;
+    this.visionInputs[0] = this.isBlocked(this.nextHeadForDirection(front))
+      ? 1
+      : 0;
+    this.visionInputs[1] = this.isBlocked(this.nextHeadForDirection(left))
+      ? 1
+      : 0;
+    this.visionInputs[2] = this.isBlocked(this.nextHeadForDirection(right))
+      ? 1
+      : 0;
 
     this.visionInputs[3] = this.tailDistanceInput(front);
     this.visionInputs[4] = this.tailDistanceInput(left);
@@ -102,12 +109,7 @@ export class Snake {
   }
 
   private isBlocked(pt: Point): boolean {
-    if (
-      pt.x < 0 ||
-      pt.x >= GRID_WIDTH ||
-      pt.y < 0 ||
-      pt.y >= GRID_HEIGHT
-    ) {
+    if (pt.x < 0 || pt.x >= GRID_WIDTH || pt.y < 0 || pt.y >= GRID_HEIGHT) {
       return true;
     }
 
@@ -175,15 +177,35 @@ export class Snake {
   } {
     switch (this.direction) {
       case Direction.Up:
-        return { front: Direction.Up, left: Direction.Left, right: Direction.Right };
+        return {
+          front: Direction.Up,
+          left: Direction.Left,
+          right: Direction.Right,
+        };
       case Direction.Right:
-        return { front: Direction.Right, left: Direction.Up, right: Direction.Down };
+        return {
+          front: Direction.Right,
+          left: Direction.Up,
+          right: Direction.Down,
+        };
       case Direction.Down:
-        return { front: Direction.Down, left: Direction.Right, right: Direction.Left };
+        return {
+          front: Direction.Down,
+          left: Direction.Right,
+          right: Direction.Left,
+        };
       case Direction.Left:
-        return { front: Direction.Left, left: Direction.Down, right: Direction.Up };
+        return {
+          front: Direction.Left,
+          left: Direction.Down,
+          right: Direction.Up,
+        };
       default:
-        return { front: Direction.Up, left: Direction.Left, right: Direction.Right };
+        return {
+          front: Direction.Up,
+          left: Direction.Left,
+          right: Direction.Right,
+        };
     }
   }
 
@@ -248,6 +270,7 @@ export class Snake {
   move(food?: Food) {
     if (this.dead) return;
 
+    this.moves++;
     this.maxStepsWithoutFood--;
 
     if (this.maxStepsWithoutFood < 0) {
@@ -309,7 +332,13 @@ export class Snake {
   }
 
   calculateFitness() {
-    this.fitness = this.score + (this.won ? WIN_REWARD : 0);
+    let fitness = this.score * 10;
+    fitness += this.moves / 100;
+    if (this.won) fitness += WIN_REWARD;
+    if (this.score === 0) {
+      fitness = this.moves / 200;
+    }
+    this.fitness = fitness;
   }
 
   mutate(rate: number) {

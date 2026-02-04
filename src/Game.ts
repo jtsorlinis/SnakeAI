@@ -19,6 +19,7 @@ export class Game {
   foods: Food[] = [];
   generation: number = 1;
   bestScore: number = 0;
+  bestFitness: number = 0;
 
   scoreElement: HTMLElement;
   currentScoreElement: HTMLElement;
@@ -27,13 +28,14 @@ export class Game {
   turboMode: boolean = false;
   showAll: boolean = false;
 
-  popSize: number = 300;
+  popSize: number = 150;
   mutationRate: number = 0.05;
   currentMutationRate: number = 0.05;
 
   averageScore: number = 0;
+  averageFitness: number = 0;
   gensSinceImprovement: number = 0;
-  highScoreGen: number = 1;
+  bestFitnessGen: number = 1;
   lastStatus: string = "";
 
   turboToggle: HTMLInputElement;
@@ -45,6 +47,7 @@ export class Game {
   savedStatsDiv: HTMLElement;
   savedGenSpan: HTMLElement;
   savedScoreSpan: HTMLElement;
+  savedFitnessSpan: HTMLElement;
   savedDateSpan: HTMLElement;
 
   constructor() {
@@ -64,6 +67,7 @@ export class Game {
     this.savedStatsDiv = document.getElementById("savedStats")!;
     this.savedGenSpan = document.getElementById("savedGen")!;
     this.savedScoreSpan = document.getElementById("savedScore")!;
+    this.savedFitnessSpan = document.getElementById("savedFitness")!;
     this.savedDateSpan = document.getElementById("savedDate")!;
 
     this.canvas.width = CANVAS_WIDTH;
@@ -88,7 +92,7 @@ export class Game {
   }
 
   private getStatus(): string {
-    if (this.bestScore <= 0) return "Bootstrapping";
+    if (this.bestFitness <= 0) return "Bootstrapping";
     if (this.gensSinceImprovement >= 100) return "Plateaued";
     if (this.gensSinceImprovement >= 50) return "Stuck";
     if (this.gensSinceImprovement >= 20) return "Slowing";
@@ -110,6 +114,7 @@ export class Game {
   initAIGame() {
     this.population.length = 0;
     this.foods.length = 0;
+    this.averageFitness = 0;
     for (let i = 0; i < this.popSize; i++) {
       this.population.push(new Snake());
       this.foods.push(new Food());
@@ -138,8 +143,10 @@ export class Game {
   resetBestSnake() {
     localStorage.removeItem(Game.SAVE_KEY);
     this.bestScore = 0;
+    this.bestFitness = 0;
+    this.averageFitness = 0;
     this.generation = 1;
-    this.highScoreGen = 1;
+    this.bestFitnessGen = 1;
     this.gensSinceImprovement = 0;
     this.updateSavedStatsDisplay();
     this.initAIGame();
@@ -160,10 +167,13 @@ export class Game {
       if (data.brainData) {
         this.savedGenSpan.textContent = data.generation;
         this.savedScoreSpan.textContent = data.score;
+        this.savedFitnessSpan.textContent =
+          typeof data.fitness === "number" ? data.fitness.toFixed(2) : "?";
         this.savedDateSpan.textContent = data.date;
       } else {
         this.savedGenSpan.textContent = "?";
         this.savedScoreSpan.textContent = "?";
+        this.savedFitnessSpan.textContent = "?";
         this.savedDateSpan.textContent = "Old Save Format";
       }
     } catch {
@@ -178,7 +188,8 @@ export class Game {
     const saveObject = {
       brainData: champion.brain,
       generation: this.generation,
-      score: this.bestScore,
+      score: champion.score,
+      fitness: champion.fitness,
       date: new Date().toLocaleString(),
     };
 
@@ -217,7 +228,6 @@ export class Game {
         }
         this.bestScore = 0;
         this.generation = 1;
-        this.highScoreGen = 1;
         this.gensSinceImprovement = 0;
         this.updateSavedStatsDisplay();
         this.initAIGame();
@@ -228,7 +238,8 @@ export class Game {
       this.foods.length = 0;
       this.generation = data.generation || 1;
       this.bestScore = data.score || 0;
-      this.highScoreGen = this.generation;
+      this.bestFitness = typeof data.fitness === "number" ? data.fitness : 0;
+      this.bestFitnessGen = this.generation;
       this.gensSinceImprovement = 0;
 
       const champion = new Snake(loadedBrain);
@@ -255,8 +266,7 @@ export class Game {
 
   updateAI() {
     let allDead = true;
-    let currentBest = 0;
-    let bestSnakeInGen: Snake | null = null;
+    let currentBestScore = 0;
     let aliveCount = 0;
     const maxCells = GRID_WIDTH * GRID_HEIGHT;
 
@@ -286,22 +296,14 @@ export class Game {
 
       if (!snake.dead) aliveCount++;
       const score = this.getScore(snake);
-      if (score > currentBest) {
-        currentBest = score;
-        bestSnakeInGen = snake;
-      }
+      if (score > currentBestScore) currentBestScore = score;
     }
 
     if (allDead) {
       this.evolve();
     }
 
-    if (currentBest > this.bestScore && bestSnakeInGen) {
-      this.bestScore = currentBest;
-      this.highScoreGen = this.generation;
-      this.gensSinceImprovement = 0;
-      this.saveBestSnake(bestSnakeInGen);
-    }
+    if (currentBestScore > this.bestScore) this.bestScore = currentBestScore;
 
     const status = this.getStatus();
     if (status !== this.lastStatus) {
@@ -312,13 +314,14 @@ export class Game {
     }
 
     const convergence =
-      this.bestScore > 0 ? this.averageScore / this.bestScore : 0;
+      this.bestFitness > 0 ? this.averageFitness / this.bestFitness : 0;
 
     this.scoreElement.innerHTML =
-      `<strong>Best: ${this.bestScore}</strong><br>` +
+      `<strong>Best Fit: ${this.bestFitness.toFixed(2)}</strong><br>` +
+      `Best Score: ${this.bestScore}<br>` +
       `Gen: ${this.generation}<br>` +
       `Alive: ${aliveCount}/${this.popSize}<br>` +
-      `Avg: ${this.averageScore.toFixed(1)}<br>` +
+      `Avg Fit: ${this.averageFitness.toFixed(2)}<br>` +
       `Stale: ${this.gensSinceImprovement}<br>` +
       `Mut: ${(this.currentMutationRate * 100).toFixed(0)}%<br>` +
       `Convergence: ${convergence.toFixed(2)}`;
@@ -326,16 +329,33 @@ export class Game {
 
   evolve() {
     let totalScore = 0;
+    let totalFitness = 0;
+    let genBestFitness = -Infinity;
+    let bestFitnessSnake: Snake | null = null;
 
     for (const snake of this.population) {
       snake.calculateFitness();
       totalScore += this.getScore(snake);
+      totalFitness += snake.fitness;
+      if (snake.fitness > genBestFitness) {
+        genBestFitness = snake.fitness;
+        bestFitnessSnake = snake;
+      }
     }
 
     this.averageScore = totalScore / this.population.length;
+    this.averageFitness = totalFitness / this.population.length;
+
+    if (genBestFitness > this.bestFitness) {
+      this.bestFitness = genBestFitness;
+      this.bestFitnessGen = this.generation;
+      if (bestFitnessSnake) {
+        this.saveBestSnake(bestFitnessSnake);
+      }
+    }
 
     const convergence =
-      this.bestScore > 0 ? this.averageScore / this.bestScore : 0;
+      this.bestFitness > 0 ? this.averageFitness / this.bestFitness : 0;
 
     this.currentMutationRate = this.mutationRate;
 
@@ -381,7 +401,7 @@ export class Game {
     }
     this.resetFoods();
     this.generation++;
-    this.gensSinceImprovement = this.generation - this.highScoreGen;
+    this.gensSinceImprovement = this.generation - this.bestFitnessGen;
   }
 
   private selectParentTournament(k: number): Snake {
@@ -447,7 +467,8 @@ export class Game {
 
     const champion = this.population[0];
     if (champion) {
-      this.currentScoreElement.textContent = `Score: ${champion.score}`;
+      champion.calculateFitness();
+      this.currentScoreElement.textContent = `Score: ${champion.score} | Fitness: ${champion.fitness.toFixed(2)}`;
     }
 
     if (this.showAll) {
