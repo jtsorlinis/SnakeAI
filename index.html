@@ -8,8 +8,15 @@
   <body>
     <div id="app">
       <div class="game-container">
-        <canvas id="gameCanvas"></canvas>
-        <div id="currentScore" class="current-score">Score: 0</div>
+        <div class="net-panel" id="netPanel">
+          <canvas id="netCanvas" class="net-canvas"></canvas>
+          <div id="netTooltip" class="net-tooltip">Label</div>
+          <div id="netShape" class="net-shape">Shape: --</div>
+        </div>
+        <div class="game-stack">
+          <canvas id="gameCanvas"></canvas>
+          <div id="currentScore" class="current-score">Score: 0</div>
+        </div>
       </div>
 
       <div class="sidebar">

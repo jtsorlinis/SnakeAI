@@ -7,6 +7,8 @@ import {
   CANVAS_HEIGHT,
   GRID_WIDTH,
   GRID_HEIGHT,
+  NET_CANVAS_WIDTH,
+  NET_CANVAS_HEIGHT,
 } from "./types";
 
 export class Game {
@@ -14,6 +16,14 @@ export class Game {
 
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
+  netCanvas: HTMLCanvasElement;
+  netCtx: CanvasRenderingContext2D;
+  netShapeElement: HTMLElement;
+  netTooltipElement: HTMLElement;
+  netPanelElement: HTMLElement;
+  netNodePositions: Array<{ id: number; label: string; x: number; y: number }> =
+    [];
+  netHoverRadius = 10;
 
   population: Snake[] = [];
   foods: Food[] = [];
@@ -53,6 +63,11 @@ export class Game {
   constructor() {
     this.canvas = document.getElementById("gameCanvas") as HTMLCanvasElement;
     this.ctx = this.canvas.getContext("2d")!;
+    this.netCanvas = document.getElementById("netCanvas") as HTMLCanvasElement;
+    this.netCtx = this.netCanvas.getContext("2d")!;
+    this.netShapeElement = document.getElementById("netShape")!;
+    this.netTooltipElement = document.getElementById("netTooltip")!;
+    this.netPanelElement = document.getElementById("netPanel")!;
     this.scoreElement = document.getElementById("score")!;
     this.currentScoreElement = document.getElementById("currentScore")!;
     this.turboToggle = document.getElementById(
@@ -72,6 +87,8 @@ export class Game {
 
     this.canvas.width = CANVAS_WIDTH;
     this.canvas.height = CANVAS_HEIGHT;
+    this.netCanvas.width = NET_CANVAS_WIDTH;
+    this.netCanvas.height = NET_CANVAS_HEIGHT;
 
     this.lastTime = 0;
 
@@ -83,6 +100,7 @@ export class Game {
 
     this.updateSavedStatsDisplay();
     this.setupInput();
+    this.setupNetHover();
     this.loop = this.loop.bind(this);
     requestAnimationFrame(this.loop);
   }
@@ -137,6 +155,51 @@ export class Game {
       ) {
         this.resetBestSnake();
       }
+    });
+  }
+
+  private setupNetHover() {
+    const hideTooltip = () => {
+      this.netTooltipElement.style.opacity = "0";
+      this.netTooltipElement.style.transform = "translateY(-4px)";
+    };
+
+    this.netCanvas.addEventListener("mousemove", (event) => {
+      const canvasRect = this.netCanvas.getBoundingClientRect();
+      const panelRect = this.netPanelElement.getBoundingClientRect();
+      const canvasX = event.clientX - canvasRect.left;
+      const canvasY = event.clientY - canvasRect.top;
+
+      let closest: { label: string; x: number; y: number } | null = null;
+      let bestDist = this.netHoverRadius * this.netHoverRadius;
+
+      for (const node of this.netNodePositions) {
+        const dx = canvasX - node.x;
+        const dy = canvasY - node.y;
+        const dist = dx * dx + dy * dy;
+        if (dist <= bestDist) {
+          bestDist = dist;
+          closest = node;
+        }
+      }
+
+      if (!closest) {
+        hideTooltip();
+        return;
+      }
+
+      const panelX = canvasX + (canvasRect.left - panelRect.left);
+      const panelY = canvasY + (canvasRect.top - panelRect.top);
+
+      this.netTooltipElement.textContent = closest.label;
+      this.netTooltipElement.style.left = `${panelX + 10}px`;
+      this.netTooltipElement.style.top = `${panelY + 10}px`;
+      this.netTooltipElement.style.opacity = "1";
+      this.netTooltipElement.style.transform = "translateY(0)";
+    });
+
+    this.netCanvas.addEventListener("mouseleave", () => {
+      hideTooltip();
     });
   }
 
@@ -461,9 +524,209 @@ export class Game {
     return top;
   }
 
+  private drawGrid() {
+    this.ctx.save();
+    this.ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+    this.ctx.lineWidth = 1.25;
+
+    for (let x = 0; x <= this.canvas.width; x += TILE_SIZE) {
+      this.ctx.beginPath();
+      this.ctx.moveTo(x + 0.5, 0);
+      this.ctx.lineTo(x + 0.5, this.canvas.height);
+      this.ctx.stroke();
+    }
+
+    for (let y = 0; y <= this.canvas.height; y += TILE_SIZE) {
+      this.ctx.beginPath();
+      this.ctx.moveTo(0, y + 0.5);
+      this.ctx.lineTo(this.canvas.width, y + 0.5);
+      this.ctx.stroke();
+    }
+
+    this.ctx.restore();
+  }
+
+  private drawNetwork(brain: NeuralNetwork | null) {
+    this.netCtx.fillStyle = "#0a0a0a";
+    this.netCtx.fillRect(0, 0, this.netCanvas.width, this.netCanvas.height);
+
+    if (!brain) {
+      this.netShapeElement.textContent = "Shape: --";
+      this.netNodePositions = [];
+      return;
+    }
+
+    const inputLabels = [
+      "Front blocked",
+      "Left blocked",
+      "Right blocked",
+      "Front tail distance",
+      "Left tail distance",
+      "Right tail distance",
+      "Food right",
+      "Food down",
+      "Facing up",
+      "Facing right",
+      "Facing down",
+    ];
+    const outputLabels = ["Go straight", "Turn left", "Turn right"];
+
+    type NodeInfo = {
+      id: number;
+      label: string;
+      type: "input" | "hidden" | "output";
+      layer: number;
+    };
+
+    let nextId = 0;
+    const inputNodes: NodeInfo[] = [];
+    for (let i = 0; i < brain.inputNodes; i++) {
+      inputNodes.push({
+        id: nextId++,
+        label: inputLabels[i] ?? `Input ${i + 1}`,
+        type: "input",
+        layer: 0,
+      });
+    }
+
+    const hiddenNodes: NodeInfo[] = [];
+    for (let i = 0; i < brain.hiddenNodes; i++) {
+      hiddenNodes.push({
+        id: nextId++,
+        label: `Hidden ${i + 1}`,
+        type: "hidden",
+        layer: 1,
+      });
+    }
+
+    const outputNodes: NodeInfo[] = [];
+    for (let i = 0; i < brain.outputNodes; i++) {
+      outputNodes.push({
+        id: nextId++,
+        label: outputLabels[i] ?? `Output ${i + 1}`,
+        type: "output",
+        layer: 2,
+      });
+    }
+
+    this.netShapeElement.textContent = `Shape: ${inputNodes.length} -> ${hiddenNodes.length} -> ${outputNodes.length}`;
+
+    const layers = [inputNodes, hiddenNodes, outputNodes];
+    const layerCount = layers.length;
+    const paddingX = 24;
+    const paddingY = 20;
+    const usableWidth = this.netCanvas.width - paddingX * 2;
+    const usableHeight = this.netCanvas.height - paddingY * 2;
+
+    const positions = new Map<number, { x: number; y: number }>();
+
+    layers.forEach((layerNodes, layerIndex) => {
+      const x =
+        layerCount === 1
+          ? this.netCanvas.width / 2
+          : paddingX + (usableWidth * layerIndex) / (layerCount - 1);
+      const count = Math.max(1, layerNodes.length);
+
+      layerNodes.forEach((node, nodeIndex) => {
+        const y =
+          count === 1
+            ? this.netCanvas.height / 2
+            : paddingY + (usableHeight * nodeIndex) / (count - 1);
+        positions.set(node.id, { x, y });
+      });
+    });
+
+    this.netNodePositions = [...inputNodes, ...hiddenNodes, ...outputNodes]
+      .map((node) => {
+        const pos = positions.get(node.id);
+        if (!pos) return null;
+        return { id: node.id, label: node.label, x: pos.x, y: pos.y };
+      })
+      .filter(
+        (node): node is { id: number; label: string; x: number; y: number } =>
+          node !== null,
+      );
+
+    const connections: Array<{ from: number; to: number; weight: number }> = [];
+    for (let h = 0; h < brain.hiddenNodes; h++) {
+      for (let i = 0; i < brain.inputNodes; i++) {
+        const weight = brain.weightsIH[h * brain.inputNodes + i];
+        connections.push({
+          from: inputNodes[i].id,
+          to: hiddenNodes[h].id,
+          weight,
+        });
+      }
+    }
+
+    for (let o = 0; o < brain.outputNodes; o++) {
+      for (let h = 0; h < brain.hiddenNodes; h++) {
+        const weight = brain.weightsHO[o * brain.hiddenNodes + h];
+        connections.push({
+          from: hiddenNodes[h].id,
+          to: outputNodes[o].id,
+          weight,
+        });
+      }
+    }
+
+    let minAbsWeight = Infinity;
+    let maxAbsWeight = 0;
+    for (const connection of connections) {
+      const absWeight = Math.abs(connection.weight);
+      if (absWeight < minAbsWeight) minAbsWeight = absWeight;
+      if (absWeight > maxAbsWeight) maxAbsWeight = absWeight;
+    }
+    const weightRange =
+      maxAbsWeight > minAbsWeight ? maxAbsWeight - minAbsWeight : 0;
+
+    for (const connection of connections) {
+      const from = positions.get(connection.from);
+      const to = positions.get(connection.to);
+      if (!from || !to) continue;
+
+      const absWeight = Math.abs(connection.weight);
+      const intensity =
+        weightRange > 0
+          ? Math.min(1, Math.max(0, (absWeight - minAbsWeight) / weightRange))
+          : 1;
+      const isPositive = connection.weight >= 0;
+      this.netCtx.strokeStyle = isPositive
+        ? `rgba(76, 175, 80, ${0.2 + intensity * 0.6})`
+        : `rgba(244, 67, 54, ${0.2 + intensity * 0.6})`;
+      this.netCtx.lineWidth = 0.75 + intensity * 2.5;
+      this.netCtx.beginPath();
+      this.netCtx.moveTo(from.x, from.y);
+      this.netCtx.lineTo(to.x, to.y);
+      this.netCtx.stroke();
+    }
+
+    for (const node of [...inputNodes, ...hiddenNodes, ...outputNodes]) {
+      const pos = positions.get(node.id);
+      if (!pos) continue;
+
+      switch (node.type) {
+        case "input":
+          this.netCtx.fillStyle = "#29b6f6";
+          break;
+        case "output":
+          this.netCtx.fillStyle = "#ffb74d";
+          break;
+        default:
+          this.netCtx.fillStyle = "#26a69a";
+          break;
+      }
+
+      this.netCtx.beginPath();
+      this.netCtx.arc(pos.x, pos.y, 6, 0, Math.PI * 2);
+      this.netCtx.fill();
+    }
+  }
+
   draw() {
     this.ctx.fillStyle = "#000";
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    this.drawGrid();
 
     const champion = this.population[0];
     if (champion) {
@@ -489,10 +752,7 @@ export class Game {
           );
         }
       }
-      return;
-    }
-
-    if (champion && !champion.dead) {
+    } else if (champion && !champion.dead) {
       champion.draw(this.ctx, TILE_SIZE, "#4caf50");
       const f = this.foods[0];
       this.ctx.fillStyle = "#f44336";
@@ -503,6 +763,8 @@ export class Game {
         TILE_SIZE,
       );
     }
+
+    this.drawNetwork(champion?.brain || null);
   }
 
   loop(currentTime: number) {
