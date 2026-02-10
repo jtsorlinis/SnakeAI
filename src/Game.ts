@@ -1,801 +1,522 @@
-import { Snake, BRAIN_CONFIG, WIN_REWARD } from "./Snake";
-import { Food } from "./Food";
-import { NeuralNetwork } from "./NeuralNetwork";
-import {
-  TILE_SIZE,
-  CANVAS_WIDTH,
-  CANVAS_HEIGHT,
-  GRID_WIDTH,
-  GRID_HEIGHT,
-  NET_CANVAS_WIDTH,
-  NET_CANVAS_HEIGHT,
-} from "./types";
+type Point = { x: number; y: number };
+
+type Genome = Float32Array;
+
+type Agent = {
+  genome: Genome;
+  body: Point[];
+  dir: number;
+  food: Point;
+  alive: boolean;
+  score: number;
+  steps: number;
+  hunger: number;
+  fitness: number;
+};
+
+const GRID_SIZE = 18;
+const TILE_SIZE = 24;
+const BOARD_SIZE = GRID_SIZE * TILE_SIZE;
+const CHART_WIDTH = 300;
+const CHART_HEIGHT = 140;
+
+const POP_SIZE = 180;
+const ELITE_COUNT = 8;
+const TOURNAMENT_SIZE = 4;
+const MUTATION_RATE = 0.08;
+const MUTATION_SIZE = 0.35;
+const BASE_HUNGER = GRID_SIZE * 2;
+const NORMAL_STEPS_PER_SECOND = 30;
+const TURBO_TIME_BUDGET_MS = 12;
+
+const INPUTS = 7;
+const OUTPUTS = 3;
+const GENE_COUNT = INPUTS * OUTPUTS;
+
+const DIRS: ReadonlyArray<Point> = [
+  { x: 0, y: -1 },
+  { x: 1, y: 0 },
+  { x: 0, y: 1 },
+  { x: -1, y: 0 },
+];
 
 export class Game {
-  private static readonly SAVE_KEY = "bestSnakeBrain";
+  private readonly board: HTMLCanvasElement;
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly chart: HTMLCanvasElement;
+  private readonly chartCtx: CanvasRenderingContext2D;
+  private readonly stats: HTMLElement;
+  private readonly turboToggle: HTMLInputElement;
 
-  canvas: HTMLCanvasElement;
-  ctx: CanvasRenderingContext2D;
-  netCanvas: HTMLCanvasElement;
-  netCtx: CanvasRenderingContext2D;
-  netShapeElement: HTMLElement;
-  netTooltipElement: HTMLElement;
-  netPanelElement: HTMLElement;
-  netNodePositions: Array<{ id: number; label: string; x: number; y: number }> =
-    [];
-  netHoverRadius = 10;
-
-  population: Snake[] = [];
-  foods: Food[] = [];
-  generation: number = 1;
-  bestScore: number = 0;
-  bestFitness: number = 0;
-
-  scoreElement: HTMLElement;
-  currentScoreElement: HTMLElement;
-  lastTime: number;
-  targetFPS: number = 60;
-  turboMode: boolean = false;
-  showAll: boolean = false;
-
-  popSize: number = 150;
-  mutationRate: number = 0.05;
-  currentMutationRate: number = 0.05;
-
-  averageScore: number = 0;
-  averageFitness: number = 0;
-  gensSinceImprovement: number = 0;
-  bestFitnessGen: number = 1;
-  lastStatus: string = "";
-
-  turboToggle: HTMLInputElement;
-  showAllToggle: HTMLInputElement;
-  resetBtn: HTMLButtonElement;
-  toastElement: HTMLElement;
-  toastTimeout: number | null = null;
-
-  savedStatsDiv: HTMLElement;
-  savedGenSpan: HTMLElement;
-  savedScoreSpan: HTMLElement;
-  savedFitnessSpan: HTMLElement;
-  savedDateSpan: HTMLElement;
+  private population: Agent[] = [];
+  private generation = 1;
+  private bestEverScore = 0;
+  private bestEverFitness = 0;
+  private bestFitnessGen = 1;
+  private history: number[] = [];
+  private turboMode = false;
+  private stepBudget = 0;
+  private lastFrameTime = 0;
+  private showcaseGenome: Genome | null = null;
+  private showcaseAgent: Agent | null = null;
 
   constructor() {
-    this.canvas = document.getElementById("gameCanvas") as HTMLCanvasElement;
-    this.ctx = this.canvas.getContext("2d")!;
-    this.netCanvas = document.getElementById("netCanvas") as HTMLCanvasElement;
-    this.netCtx = this.netCanvas.getContext("2d")!;
-    this.netShapeElement = document.getElementById("netShape")!;
-    this.netTooltipElement = document.getElementById("netTooltip")!;
-    this.netPanelElement = document.getElementById("netPanel")!;
-    this.scoreElement = document.getElementById("score")!;
-    this.currentScoreElement = document.getElementById("currentScore")!;
-    this.turboToggle = document.getElementById(
-      "turboToggle",
-    ) as HTMLInputElement;
-    this.showAllToggle = document.getElementById(
-      "showAllToggle",
-    ) as HTMLInputElement;
-    this.resetBtn = document.getElementById("resetBtn") as HTMLButtonElement;
-    this.toastElement = document.getElementById("toast")!;
+    this.board = this.getCanvas("gameCanvas");
+    this.chart = this.getCanvas("chartCanvas");
+    this.stats = this.getElement("stats");
+    this.turboToggle = this.getInput("turboToggle");
 
-    this.savedStatsDiv = document.getElementById("savedStats")!;
-    this.savedGenSpan = document.getElementById("savedGen")!;
-    this.savedScoreSpan = document.getElementById("savedScore")!;
-    this.savedFitnessSpan = document.getElementById("savedFitness")!;
-    this.savedDateSpan = document.getElementById("savedDate")!;
+    this.ctx = this.board.getContext("2d") as CanvasRenderingContext2D;
+    this.chartCtx = this.chart.getContext("2d") as CanvasRenderingContext2D;
 
-    this.canvas.width = CANVAS_WIDTH;
-    this.canvas.height = CANVAS_HEIGHT;
-    this.netCanvas.width = NET_CANVAS_WIDTH;
-    this.netCanvas.height = NET_CANVAS_HEIGHT;
+    this.board.width = BOARD_SIZE;
+    this.board.height = BOARD_SIZE;
+    this.chart.width = CHART_WIDTH;
+    this.chart.height = CHART_HEIGHT;
 
-    this.lastTime = 0;
+    this.turboMode = this.turboToggle.checked;
+    this.turboToggle.addEventListener("change", () => {
+      this.turboMode = this.turboToggle.checked;
+      this.stepBudget = 0;
+    });
 
-    if (localStorage.getItem(Game.SAVE_KEY)) {
-      this.loadBestSnake(true);
-    } else {
-      this.initAIGame();
+    for (let i = 0; i < POP_SIZE; i++) {
+      this.population.push(this.createAgent());
     }
 
-    this.updateSavedStatsDisplay();
-    this.setupInput();
-    this.setupNetHover();
-    this.loop = this.loop.bind(this);
+    this.setShowcaseGenome(this.population[0].genome);
+
     requestAnimationFrame(this.loop);
   }
 
-  private getScore(snake: Snake): number {
-    return snake.score;
+  private getCanvas(id: string): HTMLCanvasElement {
+    const element = document.getElementById(id);
+    if (!(element instanceof HTMLCanvasElement)) {
+      throw new Error(`Missing canvas: ${id}`);
+    }
+    return element;
   }
 
-  private getStatus(): string {
-    if (this.bestFitness <= 0) return "Bootstrapping";
-    if (this.gensSinceImprovement >= 100) return "Plateaued";
-    if (this.gensSinceImprovement >= 50) return "Stuck";
-    if (this.gensSinceImprovement >= 20) return "Slowing";
-    return "Improving";
+  private getElement(id: string): HTMLElement {
+    const element = document.getElementById(id);
+    if (!element) {
+      throw new Error(`Missing element: ${id}`);
+    }
+    return element;
   }
 
-  showToast(message: string) {
-    if (this.toastTimeout) {
-      clearTimeout(this.toastTimeout);
+  private getInput(id: string): HTMLInputElement {
+    const element = document.getElementById(id);
+    if (!(element instanceof HTMLInputElement)) {
+      throw new Error(`Missing input: ${id}`);
     }
-    this.toastElement.textContent = message;
-    this.toastElement.classList.add("visible");
-
-    this.toastTimeout = window.setTimeout(() => {
-      this.toastElement.classList.remove("visible");
-    }, 2500);
+    return element;
   }
 
-  initAIGame() {
-    this.population.length = 0;
-    this.foods.length = 0;
-    this.averageFitness = 0;
-    for (let i = 0; i < this.popSize; i++) {
-      this.population.push(new Snake());
-      this.foods.push(new Food());
+  private randomGenome(): Genome {
+    const genome = new Float32Array(GENE_COUNT);
+    for (let i = 0; i < genome.length; i++) {
+      genome[i] = Math.random() * 2 - 1;
     }
-    this.targetFPS = 60;
+    return genome;
   }
 
-  setupInput() {
-    this.turboToggle.addEventListener("change", () => {
-      this.turboMode = this.turboToggle.checked;
-    });
-
-    this.showAllToggle.addEventListener("change", () => {
-      this.showAll = this.showAllToggle.checked;
-    });
-
-    this.resetBtn.addEventListener("click", () => {
-      if (
-        confirm("Are you sure you want to delete the best snake and restart?")
-      ) {
-        this.resetBestSnake();
-      }
-    });
-  }
-
-  private setupNetHover() {
-    const hideTooltip = () => {
-      this.netTooltipElement.style.opacity = "0";
-      this.netTooltipElement.style.transform = "translateY(-4px)";
-    };
-
-    this.netCanvas.addEventListener("mousemove", (event) => {
-      const canvasRect = this.netCanvas.getBoundingClientRect();
-      const panelRect = this.netPanelElement.getBoundingClientRect();
-      const canvasX = event.clientX - canvasRect.left;
-      const canvasY = event.clientY - canvasRect.top;
-
-      let closest: { label: string; x: number; y: number } | null = null;
-      let bestDist = this.netHoverRadius * this.netHoverRadius;
-
-      for (const node of this.netNodePositions) {
-        const dx = canvasX - node.x;
-        const dy = canvasY - node.y;
-        const dist = dx * dx + dy * dy;
-        if (dist <= bestDist) {
-          bestDist = dist;
-          closest = node;
-        }
-      }
-
-      if (!closest) {
-        hideTooltip();
-        return;
-      }
-
-      const panelX = canvasX + (canvasRect.left - panelRect.left);
-      const panelY = canvasY + (canvasRect.top - panelRect.top);
-
-      this.netTooltipElement.textContent = closest.label;
-      this.netTooltipElement.style.left = `${panelX + 10}px`;
-      this.netTooltipElement.style.top = `${panelY + 10}px`;
-      this.netTooltipElement.style.opacity = "1";
-      this.netTooltipElement.style.transform = "translateY(0)";
-    });
-
-    this.netCanvas.addEventListener("mouseleave", () => {
-      hideTooltip();
-    });
-  }
-
-  resetBestSnake() {
-    localStorage.removeItem(Game.SAVE_KEY);
-    this.bestScore = 0;
-    this.bestFitness = 0;
-    this.averageFitness = 0;
-    this.generation = 1;
-    this.bestFitnessGen = 1;
-    this.gensSinceImprovement = 0;
-    this.updateSavedStatsDisplay();
-    this.initAIGame();
-    this.showToast("Progress Reset");
-  }
-
-  updateSavedStatsDisplay() {
-    const raw = localStorage.getItem(Game.SAVE_KEY);
-    if (!raw) {
-      this.savedStatsDiv.style.display = "none";
-      return;
-    }
-
-    this.savedStatsDiv.style.display = "block";
-
-    try {
-      const data = JSON.parse(raw);
-      if (data.brainData) {
-        this.savedGenSpan.textContent = data.generation;
-        this.savedScoreSpan.textContent = data.score;
-        this.savedFitnessSpan.textContent =
-          typeof data.fitness === "number" ? data.fitness.toFixed(2) : "?";
-        this.savedDateSpan.textContent = data.date;
-      } else {
-        this.savedGenSpan.textContent = "?";
-        this.savedScoreSpan.textContent = "?";
-        this.savedFitnessSpan.textContent = "?";
-        this.savedDateSpan.textContent = "Old Save Format";
-      }
-    } catch {
-      this.savedStatsDiv.style.display = "none";
-    }
-  }
-
-  saveBestSnake(targetSnake?: Snake) {
-    if (this.population.length === 0 && !targetSnake) return;
-
-    const champion = targetSnake || this.population[0];
-    const saveObject = {
-      brainData: champion.brain,
-      generation: this.generation,
-      score: champion.score,
-      fitness: champion.fitness,
-      date: new Date().toLocaleString(),
-    };
-
-    localStorage.setItem(Game.SAVE_KEY, JSON.stringify(saveObject));
-    this.updateSavedStatsDisplay();
-    this.showToast(`Saved Gen ${this.generation} Champion`);
-  }
-
-  loadBestSnake(silent: boolean = false) {
-    const raw = localStorage.getItem(Game.SAVE_KEY);
-    if (!raw) {
-      if (!silent) this.showToast("No save found");
-      return;
-    }
-
-    try {
-      const data = JSON.parse(raw);
-      let loadedBrain: NeuralNetwork;
-
-      if (data.brainData) {
-        loadedBrain = NeuralNetwork.restore(data.brainData);
-      } else if (data.brain) {
-        loadedBrain = NeuralNetwork.restore(data.brain);
-      } else {
-        loadedBrain = NeuralNetwork.deserialize(raw);
-      }
-
-      if (
-        loadedBrain.inputNodes !== BRAIN_CONFIG.inputNodes ||
-        loadedBrain.hiddenNodes !== BRAIN_CONFIG.hiddenNodes ||
-        loadedBrain.outputNodes !== BRAIN_CONFIG.outputNodes
-      ) {
-        localStorage.removeItem(Game.SAVE_KEY);
-        if (!silent) {
-          this.showToast("Saved brain incompatible, starting fresh");
-        }
-        this.bestScore = 0;
-        this.generation = 1;
-        this.gensSinceImprovement = 0;
-        this.updateSavedStatsDisplay();
-        this.initAIGame();
-        return;
-      }
-
-      this.population.length = 0;
-      this.foods.length = 0;
-      this.generation = data.generation || 1;
-      this.bestScore = data.score || 0;
-      this.bestFitness = typeof data.fitness === "number" ? data.fitness : 0;
-      this.bestFitnessGen = this.generation;
-      this.gensSinceImprovement = 0;
-
-      const champion = new Snake(loadedBrain);
-      this.population.push(champion);
-      this.foods.push(new Food());
-
-      for (let i = 1; i < this.popSize; i++) {
-        const childBrain = loadedBrain.clone();
-        childBrain.mutate(this.mutationRate);
-        this.population.push(new Snake(childBrain));
-        this.foods.push(new Food());
-      }
-      if (!silent) this.showToast("Checkpoint Loaded");
-    } catch (e) {
-      console.error(e);
-      if (!silent) this.showToast("Load Failed");
-      this.initAIGame();
-    }
-  }
-
-  update() {
-    this.updateAI();
-  }
-
-  updateAI() {
-    let allDead = true;
-    let currentBestScore = 0;
-    let aliveCount = 0;
-    const maxCells = GRID_WIDTH * GRID_HEIGHT;
-
-    for (let i = 0; i < this.population.length; i++) {
-      const snake = this.population[i];
-      const food = this.foods[i];
-
-      if (!snake.dead) {
-        allDead = false;
-        snake.think(food);
-        snake.move(food);
-
-        if (!snake.dead) {
-          const head = snake.body[0];
-          if (head.x === food.position.x && head.y === food.position.y) {
-            const willFillBoard = snake.body.length + 1 >= maxCells;
-            snake.grow();
-            if (willFillBoard) {
-              snake.won = true;
-              snake.dead = true;
-            } else {
-              food.respawn(snake.bodySet);
-            }
-          }
-        }
-      }
-
-      if (!snake.dead) aliveCount++;
-      const score = this.getScore(snake);
-      if (score > currentBestScore) currentBestScore = score;
-    }
-
-    if (allDead) {
-      this.evolve();
-    }
-
-    if (currentBestScore > this.bestScore) this.bestScore = currentBestScore;
-
-    const status = this.getStatus();
-    if (status !== this.lastStatus) {
-      if (status === "Plateaued") {
-        this.showToast("Status: Plateaued (no new best in 100 gens)");
-      }
-      this.lastStatus = status;
-    }
-
-    const convergence =
-      this.bestFitness > 0 ? this.averageFitness / this.bestFitness : 0;
-
-    this.scoreElement.innerHTML =
-      `<strong>Best Fit: ${this.bestFitness.toFixed(2)}</strong><br>` +
-      `Best Score: ${this.bestScore}<br>` +
-      `Gen: ${this.generation}<br>` +
-      `Alive: ${aliveCount}/${this.popSize}<br>` +
-      `Avg Fit: ${this.averageFitness.toFixed(2)}<br>` +
-      `Stale: ${this.gensSinceImprovement}<br>` +
-      `Mut: ${(this.currentMutationRate * 100).toFixed(0)}%<br>` +
-      `Convergence: ${convergence.toFixed(2)}`;
-  }
-
-  evolve() {
-    let totalScore = 0;
-    let totalFitness = 0;
-    let genBestFitness = -Infinity;
-    let bestFitnessSnake: Snake | null = null;
-
-    for (const snake of this.population) {
-      snake.calculateFitness();
-      totalScore += this.getScore(snake);
-      totalFitness += snake.fitness;
-      if (snake.fitness > genBestFitness) {
-        genBestFitness = snake.fitness;
-        bestFitnessSnake = snake;
-      }
-    }
-
-    this.averageScore = totalScore / this.population.length;
-    this.averageFitness = totalFitness / this.population.length;
-
-    if (genBestFitness > this.bestFitness) {
-      this.bestFitness = genBestFitness;
-      this.bestFitnessGen = this.generation;
-      if (bestFitnessSnake) {
-        this.saveBestSnake(bestFitnessSnake);
-      }
-    }
-
-    const convergence =
-      this.bestFitness > 0 ? this.averageFitness / this.bestFitness : 0;
-
-    this.currentMutationRate = this.mutationRate;
-
-    if (this.gensSinceImprovement > 100) {
-      this.currentMutationRate = 0.2;
-    } else if (this.gensSinceImprovement > 50) {
-      this.currentMutationRate = 0.1;
-    } else if (this.gensSinceImprovement > 20 && convergence > 0.6) {
-      this.currentMutationRate = 0.1;
-    }
-
-    const newPop: Snake[] = [];
-    const eliteCount = Math.min(5, this.popSize);
-    const elites = this.pickTopK(eliteCount);
-    for (const elite of elites) {
-      newPop.push(new Snake(elite.brain));
-    }
-
-    let immigrantRate = 0.05;
-    if (this.gensSinceImprovement > 100) immigrantRate = 0.2;
-    else if (this.gensSinceImprovement > 50) immigrantRate = 0.1;
-
-    const immigrantCount = Math.min(
-      Math.floor(this.popSize * immigrantRate),
-      this.popSize - newPop.length,
-    );
-    for (let i = 0; i < immigrantCount; i++) {
-      newPop.push(new Snake());
-    }
-
-    const tournamentSize = this.gensSinceImprovement > 50 ? 3 : 5;
-    for (let i = newPop.length; i < this.popSize; i++) {
-      const parentA = this.selectParentTournament(tournamentSize);
-      const parentB = this.selectParentTournament(tournamentSize);
-      const childBrain = parentA.brain.crossover(parentB.brain);
-      childBrain.mutate(this.currentMutationRate);
-      newPop.push(new Snake(childBrain));
-    }
-
-    this.population.length = 0;
-    for (const snake of newPop) {
-      this.population.push(snake);
-    }
-    this.resetFoods();
-    this.generation++;
-    this.gensSinceImprovement = this.generation - this.bestFitnessGen;
-  }
-
-  private selectParentTournament(k: number): Snake {
-    const kk = Math.max(1, Math.floor(k));
-    let best =
-      this.population[Math.floor(Math.random() * this.population.length)];
-    for (let i = 1; i < kk; i++) {
-      const contender =
-        this.population[Math.floor(Math.random() * this.population.length)];
-      if (contender.fitness > best.fitness) best = contender;
-    }
-    return best;
-  }
-
-  private resetFoods() {
-    if (this.foods.length !== this.popSize) {
-      this.foods.length = 0;
-      for (let i = 0; i < this.popSize; i++) {
-        this.foods.push(new Food());
-      }
-      return;
-    }
-    for (let i = 0; i < this.foods.length; i++) {
-      this.foods[i].randomize();
-    }
-  }
-
-  private pickTopK(k: number): Snake[] {
-    if (k <= 0) return [];
-    const top: Snake[] = [];
-
-    for (const snake of this.population) {
-      if (top.length === 0) {
-        top.push(snake);
-        continue;
-      }
-
-      if (top.length < k) {
-        let insertAt = top.length;
-        while (insertAt > 0 && snake.fitness > top[insertAt - 1].fitness) {
-          insertAt--;
-        }
-        top.splice(insertAt, 0, snake);
-        continue;
-      }
-
-      if (snake.fitness <= top[top.length - 1].fitness) continue;
-
-      let insertAt = top.length - 1;
-      while (insertAt > 0 && snake.fitness > top[insertAt - 1].fitness) {
-        insertAt--;
-      }
-      top.splice(insertAt, 0, snake);
-      top.pop();
-    }
-
-    return top;
-  }
-
-  private drawGrid() {
-    this.ctx.save();
-    this.ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
-    this.ctx.lineWidth = 1.25;
-
-    for (let x = 0; x <= this.canvas.width; x += TILE_SIZE) {
-      this.ctx.beginPath();
-      this.ctx.moveTo(x + 0.5, 0);
-      this.ctx.lineTo(x + 0.5, this.canvas.height);
-      this.ctx.stroke();
-    }
-
-    for (let y = 0; y <= this.canvas.height; y += TILE_SIZE) {
-      this.ctx.beginPath();
-      this.ctx.moveTo(0, y + 0.5);
-      this.ctx.lineTo(this.canvas.width, y + 0.5);
-      this.ctx.stroke();
-    }
-
-    this.ctx.restore();
-  }
-
-  private drawNetwork(brain: NeuralNetwork | null) {
-    this.netCtx.fillStyle = "#0a0a0a";
-    this.netCtx.fillRect(0, 0, this.netCanvas.width, this.netCanvas.height);
-
-    if (!brain) {
-      this.netShapeElement.textContent = "Shape: --";
-      this.netNodePositions = [];
-      return;
-    }
-
-    const inputLabels = [
-      "Front blocked",
-      "Left blocked",
-      "Right blocked",
-      "Front tail distance",
-      "Left tail distance",
-      "Right tail distance",
-      "Food right",
-      "Food down",
-      "Facing up",
-      "Facing right",
-      "Facing down",
+  private createAgent(genome?: Genome): Agent {
+    const x = Math.floor(GRID_SIZE / 2);
+    const y = Math.floor(GRID_SIZE / 2);
+    const body = [
+      { x, y },
+      { x: x - 1, y },
+      { x: x - 2, y },
     ];
-    const outputLabels = ["Go straight", "Turn left", "Turn right"];
 
-    type NodeInfo = {
-      id: number;
-      label: string;
-      type: "input" | "hidden" | "output";
-      layer: number;
+    return {
+      genome: genome ? new Float32Array(genome) : this.randomGenome(),
+      body,
+      dir: 1,
+      food: this.randomFood(body),
+      alive: true,
+      score: 0,
+      steps: 0,
+      hunger: BASE_HUNGER,
+      fitness: 0,
     };
+  }
 
-    let nextId = 0;
-    const inputNodes: NodeInfo[] = [];
-    for (let i = 0; i < brain.inputNodes; i++) {
-      inputNodes.push({
-        id: nextId++,
-        label: inputLabels[i] ?? `Input ${i + 1}`,
-        type: "input",
-        layer: 0,
-      });
-    }
+  private setShowcaseGenome(genome: Genome): void {
+    this.showcaseGenome = new Float32Array(genome);
+    this.showcaseAgent = this.createAgent(this.showcaseGenome);
+  }
 
-    const hiddenNodes: NodeInfo[] = [];
-    for (let i = 0; i < brain.hiddenNodes; i++) {
-      hiddenNodes.push({
-        id: nextId++,
-        label: `Hidden ${i + 1}`,
-        type: "hidden",
-        layer: 1,
-      });
-    }
-
-    const outputNodes: NodeInfo[] = [];
-    for (let i = 0; i < brain.outputNodes; i++) {
-      outputNodes.push({
-        id: nextId++,
-        label: outputLabels[i] ?? `Output ${i + 1}`,
-        type: "output",
-        layer: 2,
-      });
-    }
-
-    this.netShapeElement.textContent = `Shape: ${inputNodes.length} -> ${hiddenNodes.length} -> ${outputNodes.length}`;
-
-    const layers = [inputNodes, hiddenNodes, outputNodes];
-    const layerCount = layers.length;
-    const paddingX = 24;
-    const paddingY = 20;
-    const usableWidth = this.netCanvas.width - paddingX * 2;
-    const usableHeight = this.netCanvas.height - paddingY * 2;
-
-    const positions = new Map<number, { x: number; y: number }>();
-
-    layers.forEach((layerNodes, layerIndex) => {
-      const x =
-        layerCount === 1
-          ? this.netCanvas.width / 2
-          : paddingX + (usableWidth * layerIndex) / (layerCount - 1);
-      const count = Math.max(1, layerNodes.length);
-
-      layerNodes.forEach((node, nodeIndex) => {
-        const y =
-          count === 1
-            ? this.netCanvas.height / 2
-            : paddingY + (usableHeight * nodeIndex) / (count - 1);
-        positions.set(node.id, { x, y });
-      });
-    });
-
-    this.netNodePositions = [...inputNodes, ...hiddenNodes, ...outputNodes]
-      .map((node) => {
-        const pos = positions.get(node.id);
-        if (!pos) return null;
-        return { id: node.id, label: node.label, x: pos.x, y: pos.y };
-      })
-      .filter(
-        (node): node is { id: number; label: string; x: number; y: number } =>
-          node !== null,
-      );
-
-    const connections: Array<{ from: number; to: number; weight: number }> = [];
-    for (let h = 0; h < brain.hiddenNodes; h++) {
-      for (let i = 0; i < brain.inputNodes; i++) {
-        const weight = brain.weightsIH[h * brain.inputNodes + i];
-        connections.push({
-          from: inputNodes[i].id,
-          to: hiddenNodes[h].id,
-          weight,
-        });
+  private randomFood(body: Point[]): Point {
+    while (true) {
+      const point = {
+        x: Math.floor(Math.random() * GRID_SIZE),
+        y: Math.floor(Math.random() * GRID_SIZE),
+      };
+      if (!this.pointInBody(body, point, body.length)) {
+        return point;
       }
-    }
-
-    for (let o = 0; o < brain.outputNodes; o++) {
-      for (let h = 0; h < brain.hiddenNodes; h++) {
-        const weight = brain.weightsHO[o * brain.hiddenNodes + h];
-        connections.push({
-          from: hiddenNodes[h].id,
-          to: outputNodes[o].id,
-          weight,
-        });
-      }
-    }
-
-    let minAbsWeight = Infinity;
-    let maxAbsWeight = 0;
-    for (const connection of connections) {
-      const absWeight = Math.abs(connection.weight);
-      if (absWeight < minAbsWeight) minAbsWeight = absWeight;
-      if (absWeight > maxAbsWeight) maxAbsWeight = absWeight;
-    }
-    const weightRange =
-      maxAbsWeight > minAbsWeight ? maxAbsWeight - minAbsWeight : 0;
-
-    for (const connection of connections) {
-      const from = positions.get(connection.from);
-      const to = positions.get(connection.to);
-      if (!from || !to) continue;
-
-      const absWeight = Math.abs(connection.weight);
-      const intensity =
-        weightRange > 0
-          ? Math.min(1, Math.max(0, (absWeight - minAbsWeight) / weightRange))
-          : 1;
-      const isPositive = connection.weight >= 0;
-      this.netCtx.strokeStyle = isPositive
-        ? `rgba(76, 175, 80, ${0.2 + intensity * 0.6})`
-        : `rgba(244, 67, 54, ${0.2 + intensity * 0.6})`;
-      this.netCtx.lineWidth = 0.75 + intensity * 2.5;
-      this.netCtx.beginPath();
-      this.netCtx.moveTo(from.x, from.y);
-      this.netCtx.lineTo(to.x, to.y);
-      this.netCtx.stroke();
-    }
-
-    for (const node of [...inputNodes, ...hiddenNodes, ...outputNodes]) {
-      const pos = positions.get(node.id);
-      if (!pos) continue;
-
-      switch (node.type) {
-        case "input":
-          this.netCtx.fillStyle = "#29b6f6";
-          break;
-        case "output":
-          this.netCtx.fillStyle = "#ffb74d";
-          break;
-        default:
-          this.netCtx.fillStyle = "#26a69a";
-          break;
-      }
-
-      this.netCtx.beginPath();
-      this.netCtx.arc(pos.x, pos.y, 6, 0, Math.PI * 2);
-      this.netCtx.fill();
     }
   }
 
-  draw() {
-    this.ctx.fillStyle = "#000";
-    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-    this.drawGrid();
-
-    const champion = this.population[0];
-    if (champion) {
-      champion.calculateFitness();
-      this.currentScoreElement.textContent = `Score: ${champion.score} | Fitness: ${champion.fitness.toFixed(2)}`;
-    }
-
-    if (this.showAll) {
-      for (let i = 0; i < this.population.length; i++) {
-        if (!this.population[i].dead) {
-          this.population[i].draw(
-            this.ctx,
-            TILE_SIZE,
-            "rgba(76, 175, 80, 0.3)",
-          );
-          const f = this.foods[i];
-          this.ctx.fillStyle = "rgba(244, 67, 54, 0.3)";
-          this.ctx.fillRect(
-            f.position.x * TILE_SIZE,
-            f.position.y * TILE_SIZE,
-            TILE_SIZE,
-            TILE_SIZE,
-          );
-        }
+  private pointInBody(body: Point[], point: Point, len: number): boolean {
+    for (let i = 0; i < len; i++) {
+      const part = body[i];
+      if (part.x === point.x && part.y === point.y) {
+        return true;
       }
-    } else if (champion && !champion.dead) {
-      champion.draw(this.ctx, TILE_SIZE, "#4caf50");
-      const f = this.foods[0];
-      this.ctx.fillStyle = "#f44336";
-      this.ctx.fillRect(
-        f.position.x * TILE_SIZE,
-        f.position.y * TILE_SIZE,
-        TILE_SIZE,
-        TILE_SIZE,
-      );
     }
-
-    this.drawNetwork(champion?.brain || null);
+    return false;
   }
 
-  loop(currentTime: number) {
-    window.requestAnimationFrame(this.loop);
+  private isBlocked(agent: Agent, delta: Point): number {
+    const head = agent.body[0];
+    const next = { x: head.x + delta.x, y: head.y + delta.y };
 
-    const isChampionDead =
-      this.population.length > 0 && this.population[0].dead;
-    const shouldTurbo = this.turboMode || (!this.showAll && isChampionDead);
+    if (
+      next.x < 0 ||
+      next.x >= GRID_SIZE ||
+      next.y < 0 ||
+      next.y >= GRID_SIZE
+    ) {
+      return 1;
+    }
 
-    if (shouldTurbo) {
-      const start = performance.now();
-      while (performance.now() - start < 12) {
-        this.update();
-        if (
-          !this.turboMode &&
-          !this.showAll &&
-          this.population.length > 0 &&
-          !this.population[0].dead
-        ) {
-          break;
-        }
+    const willEat = next.x === agent.food.x && next.y === agent.food.y;
+    const len = willEat ? agent.body.length : agent.body.length - 1;
+
+    return this.pointInBody(agent.body, next, len) ? 1 : 0;
+  }
+
+  private sense(agent: Agent): number[] {
+    const head = agent.body[0];
+    const forward = DIRS[agent.dir];
+    const left = DIRS[(agent.dir + 3) % 4];
+    const right = DIRS[(agent.dir + 1) % 4];
+
+    const dx = agent.food.x - head.x;
+    const dy = agent.food.y - head.y;
+
+    return [
+      this.isBlocked(agent, forward),
+      this.isBlocked(agent, left),
+      this.isBlocked(agent, right),
+      (dx * forward.x + dy * forward.y) / GRID_SIZE,
+      (dx * left.x + dy * left.y) / GRID_SIZE,
+      (dx * right.x + dy * right.y) / GRID_SIZE,
+      1,
+    ];
+  }
+
+  private chooseAction(genome: Genome, inputs: number[]): number {
+    let bestValue = Number.NEGATIVE_INFINITY;
+    let bestAction = 0;
+
+    for (let output = 0; output < OUTPUTS; output++) {
+      let value = 0;
+      const offset = output * INPUTS;
+
+      for (let i = 0; i < INPUTS; i++) {
+        value += genome[offset + i] * inputs[i];
       }
-      this.draw();
+
+      if (value > bestValue) {
+        bestValue = value;
+        bestAction = output;
+      }
+    }
+
+    return bestAction;
+  }
+
+  private step(agent: Agent): void {
+    if (!agent.alive) {
+      return;
+    }
+
+    const action = this.chooseAction(agent.genome, this.sense(agent));
+    if (action === 1) {
+      agent.dir = (agent.dir + 3) % 4;
+    } else if (action === 2) {
+      agent.dir = (agent.dir + 1) % 4;
+    }
+
+    const move = DIRS[agent.dir];
+    const head = agent.body[0];
+    const next = { x: head.x + move.x, y: head.y + move.y };
+
+    agent.steps += 1;
+    agent.hunger -= 1;
+
+    if (
+      next.x < 0 ||
+      next.x >= GRID_SIZE ||
+      next.y < 0 ||
+      next.y >= GRID_SIZE
+    ) {
+      agent.alive = false;
+      return;
+    }
+
+    const ate = next.x === agent.food.x && next.y === agent.food.y;
+    const len = ate ? agent.body.length : agent.body.length - 1;
+
+    if (this.pointInBody(agent.body, next, len)) {
+      agent.alive = false;
+      return;
+    }
+
+    agent.body.unshift(next);
+
+    if (ate) {
+      agent.score += 1;
+      agent.hunger = BASE_HUNGER + agent.score * 25;
+      agent.food = this.randomFood(agent.body);
     } else {
-      const secondsSinceLastRender = (currentTime - this.lastTime) / 1000;
-      if (secondsSinceLastRender < 1 / this.targetFPS) return;
+      agent.body.pop();
+    }
 
-      this.lastTime = currentTime;
-
-      this.update();
-      this.draw();
+    if (agent.hunger <= 0) {
+      agent.alive = false;
     }
   }
+
+  private fitness(agent: Agent): number {
+    const head = agent.body[0];
+    const dist = Math.abs(head.x - agent.food.x) + Math.abs(head.y - agent.food.y);
+    return agent.score * agent.score * 200 + agent.steps - dist;
+  }
+
+  private crossover(a: Genome, b: Genome): Genome {
+    const child = new Float32Array(GENE_COUNT);
+    for (let i = 0; i < GENE_COUNT; i++) {
+      child[i] = Math.random() < 0.5 ? a[i] : b[i];
+    }
+    return child;
+  }
+
+  private mutate(genome: Genome, rate: number, amount: number): void {
+    for (let i = 0; i < genome.length; i++) {
+      if (Math.random() < rate) {
+        genome[i] += (Math.random() * 2 - 1) * amount;
+      }
+    }
+  }
+
+  private pickParent(ranked: Agent[]): Agent {
+    const poolSize = Math.max(2, Math.floor(ranked.length * 0.4));
+    let winner = ranked[Math.floor(Math.random() * poolSize)];
+
+    for (let i = 1; i < TOURNAMENT_SIZE; i++) {
+      const challenger = ranked[Math.floor(Math.random() * poolSize)];
+      if (challenger.fitness > winner.fitness) {
+        winner = challenger;
+      }
+    }
+
+    return winner;
+  }
+
+  private evolve(): void {
+    for (const agent of this.population) {
+      agent.fitness = this.fitness(agent);
+    }
+
+    const ranked = [...this.population].sort((a, b) => b.fitness - a.fitness);
+    const best = ranked[0];
+
+    this.bestEverScore = Math.max(this.bestEverScore, best.score);
+    if (this.generation === 1 || best.fitness > this.bestEverFitness) {
+      this.bestEverFitness = best.fitness;
+      this.bestFitnessGen = this.generation;
+      this.setShowcaseGenome(best.genome);
+    }
+
+    this.history.push(best.score);
+    if (this.history.length > 240) {
+      this.history.shift();
+    }
+
+    const next: Agent[] = [];
+
+    for (let i = 0; i < ELITE_COUNT; i++) {
+      next.push(this.createAgent(ranked[i].genome));
+    }
+
+    while (next.length < POP_SIZE) {
+      const parentA = this.pickParent(ranked);
+      const parentB = this.pickParent(ranked);
+      const child = this.crossover(parentA.genome, parentB.genome);
+      this.mutate(child, MUTATION_RATE, MUTATION_SIZE);
+      next.push(this.createAgent(child));
+    }
+
+    this.population = next;
+    this.generation += 1;
+  }
+
+  private simulate(stepCount: number): void {
+    for (let i = 0; i < stepCount; i++) {
+      let alive = 0;
+
+      for (const agent of this.population) {
+        if (!agent.alive) {
+          continue;
+        }
+
+        this.step(agent);
+        if (agent.alive) {
+          alive += 1;
+        }
+      }
+
+      if (alive === 0) {
+        this.evolve();
+      }
+
+      if (this.showcaseAgent) {
+        this.step(this.showcaseAgent);
+      }
+
+      if (!this.showcaseAgent?.alive && this.showcaseGenome) {
+        this.showcaseAgent = this.createAgent(this.showcaseGenome);
+      }
+    }
+  }
+
+  private drawBoard(agent: Agent): void {
+    this.ctx.fillStyle = "#000";
+    this.ctx.fillRect(0, 0, BOARD_SIZE, BOARD_SIZE);
+
+    this.ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+    this.ctx.lineWidth = 1.1;
+
+    for (let p = 0; p <= BOARD_SIZE; p += TILE_SIZE) {
+      this.ctx.beginPath();
+      this.ctx.moveTo(p + 0.5, 0);
+      this.ctx.lineTo(p + 0.5, BOARD_SIZE);
+      this.ctx.stroke();
+
+      this.ctx.beginPath();
+      this.ctx.moveTo(0, p + 0.5);
+      this.ctx.lineTo(BOARD_SIZE, p + 0.5);
+      this.ctx.stroke();
+    }
+
+    this.ctx.fillStyle = "#f44336";
+    this.ctx.fillRect(
+      agent.food.x * TILE_SIZE + 3,
+      agent.food.y * TILE_SIZE + 3,
+      TILE_SIZE - 6,
+      TILE_SIZE - 6,
+    );
+
+    for (let i = agent.body.length - 1; i >= 0; i--) {
+      const part = agent.body[i];
+      this.ctx.fillStyle = i === 0 ? "#4caf50" : "#43a047";
+      this.ctx.fillRect(
+        part.x * TILE_SIZE + 2,
+        part.y * TILE_SIZE + 2,
+        TILE_SIZE - 4,
+        TILE_SIZE - 4,
+      );
+    }
+  }
+
+  private drawHistory(): void {
+    this.chartCtx.fillStyle = "#000";
+    this.chartCtx.fillRect(0, 0, CHART_WIDTH, CHART_HEIGHT);
+
+    this.chartCtx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+    this.chartCtx.lineWidth = 1;
+
+    for (let i = 1; i <= 3; i++) {
+      const y = (CHART_HEIGHT * i) / 4;
+      this.chartCtx.beginPath();
+      this.chartCtx.moveTo(0, y + 0.5);
+      this.chartCtx.lineTo(CHART_WIDTH, y + 0.5);
+      this.chartCtx.stroke();
+    }
+
+    if (this.history.length < 2) {
+      return;
+    }
+
+    let maxScore = 1;
+    for (const score of this.history) {
+      if (score > maxScore) {
+        maxScore = score;
+      }
+    }
+
+    this.chartCtx.strokeStyle = "#646cff";
+    this.chartCtx.lineWidth = 2;
+    this.chartCtx.beginPath();
+
+    for (let i = 0; i < this.history.length; i++) {
+      const x = 10 + (i / (this.history.length - 1)) * (CHART_WIDTH - 20);
+      const y = CHART_HEIGHT - 10 - (this.history[i] / maxScore) * (CHART_HEIGHT - 20);
+      if (i === 0) {
+        this.chartCtx.moveTo(x, y);
+      } else {
+        this.chartCtx.lineTo(x, y);
+      }
+    }
+
+    this.chartCtx.stroke();
+
+    this.chartCtx.fillStyle = "rgba(255, 255, 255, 0.75)";
+    this.chartCtx.font = "12px IBM Plex Mono, monospace";
+    this.chartCtx.fillText(`Gen best score history (max ${maxScore})`, 10, 16);
+  }
+
+  private updateStats(): void {
+    let alive = 0;
+
+    for (const agent of this.population) {
+      if (agent.alive) {
+        alive += 1;
+      }
+    }
+
+    this.stats.innerHTML = [
+      `Generation: <strong>${this.generation}</strong>`,
+      `Alive: ${alive}/${POP_SIZE}`,
+      `Best score: ${this.bestEverScore}`,
+      `Best fitness: ${this.bestEverFitness.toFixed(1)}`,
+      `Stale: ${Math.max(0, this.generation - this.bestFitnessGen)}`,
+    ].join("<br>");
+  }
+
+  private render(): void {
+    const view = this.showcaseAgent ?? this.population[0];
+    this.drawBoard(view);
+    this.drawHistory();
+    this.updateStats();
+  }
+
+  private loop = (time: number): void => {
+    if (this.lastFrameTime === 0) {
+      this.lastFrameTime = time;
+    }
+    const deltaSeconds = Math.max(0, (time - this.lastFrameTime) / 1000);
+    this.lastFrameTime = time;
+
+    if (this.turboMode) {
+      const start = performance.now();
+      do {
+        this.simulate(1);
+      } while (performance.now() - start < TURBO_TIME_BUDGET_MS);
+    } else {
+      this.stepBudget += deltaSeconds * NORMAL_STEPS_PER_SECOND;
+      const stepCount = Math.floor(this.stepBudget);
+      if (stepCount > 0) {
+        this.stepBudget -= stepCount;
+        this.simulate(stepCount);
+      }
+    }
+    this.render();
+    requestAnimationFrame(this.loop);
+  };
 }
