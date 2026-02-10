@@ -7,6 +7,7 @@
   </head>
   <body>
     <main id="app">
+      <canvas id="netCanvas" aria-label="Neural network"></canvas>
       <canvas id="gameCanvas" aria-label="Snake board"></canvas>
       <section class="panel">
         <h1>Snake GA Trainer</h1>
@@ -14,6 +15,10 @@
         <div class="toggle-row">
           <input id="turboToggle" type="checkbox" />
           <label for="turboToggle">Turbo (max speed)</label>
+        </div>
+        <div class="toggle-row">
+          <input id="networkToggle" type="checkbox" checked />
+          <label for="networkToggle">Show network</label>
         </div>
         <canvas id="chartCanvas" aria-label="Generation history"></canvas>
       </section>
