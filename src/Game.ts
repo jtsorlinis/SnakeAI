@@ -39,8 +39,8 @@ const BASE_HUNGER = GRID_SIZE * 2;
 const NORMAL_STEPS_PER_SECOND = 30;
 const TURBO_TIME_BUDGET_MS = 12;
 
-const INPUTS = 7;
-const HIDDEN = 8;
+const INPUTS = 11;
+const HIDDEN = 10;
 const OUTPUTS = 3;
 const IH_COUNT = INPUTS * HIDDEN;
 const H_BIAS_COUNT = HIDDEN;
@@ -232,43 +232,95 @@ export class Game {
     return false;
   }
 
-  private isBlocked(agent: Agent, delta: Point): number {
-    const head = agent.body[0];
-    const next = { x: head.x + delta.x, y: head.y + delta.y };
+  private checkForObstacle(
+    head: Point,
+    direction: Point,
+    snake: Point[],
+  ): number {
+    const checkX = head.x + direction.x;
+    const checkY = head.y + direction.y;
 
     if (
-      next.x < 0 ||
-      next.x >= GRID_SIZE ||
-      next.y < 0 ||
-      next.y >= GRID_SIZE
+      checkX < 0 ||
+      checkX >= GRID_SIZE ||
+      checkY < 0 ||
+      checkY >= GRID_SIZE
     ) {
       return 1;
     }
 
-    const willEat = next.x === agent.food.x && next.y === agent.food.y;
-    const len = willEat ? agent.body.length : agent.body.length - 1;
+    for (let i = 1; i < snake.length; i++) {
+      if (snake[i].x === checkX && snake[i].y === checkY) {
+        return 1;
+      }
+    }
 
-    return this.pointInBody(agent.body, next, len) ? 1 : 0;
+    return 0;
+  }
+
+  private findTailDistance(
+    head: Point,
+    direction: Point,
+    snake: Point[],
+  ): number {
+    const maxDist = GRID_SIZE;
+    let distance = 0;
+    let currentX = head.x;
+    let currentY = head.y;
+
+    while (distance < maxDist) {
+      distance += 1;
+      currentX += direction.x;
+      currentY += direction.y;
+
+      if (
+        currentX < 0 ||
+        currentX >= GRID_SIZE ||
+        currentY < 0 ||
+        currentY >= GRID_SIZE
+      ) {
+        return maxDist + 1;
+      }
+
+      for (let i = 1; i < snake.length; i++) {
+        if (snake[i].x === currentX && snake[i].y === currentY) {
+          return distance;
+        }
+      }
+    }
+
+    return maxDist + 1;
   }
 
   private sense(agent: Agent): number[] {
     const head = agent.body[0];
-    const forward = DIRS[agent.dir];
+    const front = DIRS[agent.dir];
     const left = DIRS[(agent.dir + 3) % 4];
     const right = DIRS[(agent.dir + 1) % 4];
+    const inputs = new Array<number>(INPUTS).fill(0);
 
-    const dx = agent.food.x - head.x;
-    const dy = agent.food.y - head.y;
+    inputs[0] = this.checkForObstacle(head, front, agent.body);
+    inputs[1] = this.checkForObstacle(head, left, agent.body);
+    inputs[2] = this.checkForObstacle(head, right, agent.body);
 
-    return [
-      this.isBlocked(agent, forward),
-      this.isBlocked(agent, left),
-      this.isBlocked(agent, right),
-      (dx * forward.x + dy * forward.y) / GRID_SIZE,
-      (dx * left.x + dy * left.y) / GRID_SIZE,
-      (dx * right.x + dy * right.y) / GRID_SIZE,
-      1,
-    ];
+    const distFront = this.findTailDistance(head, front, agent.body);
+    const distLeft = this.findTailDistance(head, left, agent.body);
+    const distRight = this.findTailDistance(head, right, agent.body);
+
+    inputs[3] = 1.0 / distFront;
+    inputs[4] = 1.0 / distLeft;
+    inputs[5] = 1.0 / distRight;
+
+    if (agent.food) {
+      inputs[6] = agent.food.x > head.x ? 1 : 0;
+      inputs[7] = agent.food.y > head.y ? 1 : 0;
+    }
+
+    inputs[8] = agent.dir === 0 ? 1 : 0;
+    inputs[9] = agent.dir === 1 ? 1 : 0;
+    inputs[10] = agent.dir === 2 ? 1 : 0;
+
+    return inputs;
   }
 
   private chooseAction(genome: Genome, inputs: number[]): number {
@@ -474,7 +526,6 @@ export class Game {
       for (let i = 0; i < INPUTS; i++) {
         this.vizInputs[i] = 0;
       }
-      this.vizInputs[INPUTS - 1] = 1;
     }
 
     for (let h = 0; h < HIDDEN; h++) {
@@ -551,10 +602,14 @@ export class Game {
       "Front blocked",
       "Left blocked",
       "Right blocked",
-      "Food forward",
-      "Food left",
-      "Food right",
-      "Bias",
+      "1/Dist front",
+      "1/Dist left",
+      "1/Dist right",
+      "Food x > head x",
+      "Food y > head y",
+      "Dir up",
+      "Dir right",
+      "Dir down",
     ];
     const outputLabels = ["Straight", "Turn left", "Turn right"];
     const activations = this.computeVisualActivations(genome, agent);
