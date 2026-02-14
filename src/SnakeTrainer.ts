@@ -20,6 +20,9 @@ import {
 import type { Agent, Genome, NetworkActivations, Point, TrainerState } from "./types";
 
 const TOURNAMENT_POOL_RATIO = 0.4;
+const FITNESS_FOOD_REWARD = 100;
+const FITNESS_DEATH_PENALTY = -25;
+const FITNESS_STEP_PENALTY = -0.01;
 
 export class SnakeTrainer {
   private population: Agent[] = [];
@@ -335,9 +338,10 @@ export class SnakeTrainer {
   }
 
   private fitness(agent: Agent): number {
-    const head = agent.body[0];
-    const dist = Math.abs(head.x - agent.food.x) + Math.abs(head.y - agent.food.y);
-    return agent.score * agent.score * 200 + agent.steps - dist;
+    const foodReward = agent.score * FITNESS_FOOD_REWARD;
+    const deathPenalty = agent.alive ? 0 : FITNESS_DEATH_PENALTY;
+    const stepPenalty = agent.steps * FITNESS_STEP_PENALTY;
+    return foodReward + deathPenalty + stepPenalty;
   }
 
   private crossover(a: Genome, b: Genome): Genome {
