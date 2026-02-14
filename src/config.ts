@@ -15,7 +15,7 @@ export const ELITE_COUNT = 8;
 export const TOURNAMENT_SIZE = 4;
 export const MUTATION_RATE = 0.08;
 export const MUTATION_SIZE = 0.35;
-export const BASE_HUNGER = GRID_SIZE * 2;
+export const BASE_HUNGER = GRID_SIZE * GRID_SIZE;
 
 export const NORMAL_STEPS_PER_SECOND = 30;
 export const TURBO_TIME_BUDGET_MS = 12;

@@ -17,13 +17,16 @@ import {
   POP_SIZE,
   TOURNAMENT_SIZE,
 } from "./config";
-import type { Agent, Genome, NetworkActivations, Point, TrainerState } from "./types";
+import type {
+  Agent,
+  Genome,
+  NetworkActivations,
+  Point,
+  TrainerState,
+} from "./types";
 
 const TOURNAMENT_POOL_RATIO = 0.4;
-const FITNESS_FOOD_REWARD = 100;
-const FITNESS_DEATH_PENALTY = -25;
-const FITNESS_STEP_PENALTY = -0.01;
-
+const GRID_CELLS = GRID_SIZE * GRID_SIZE;
 export class SnakeTrainer {
   private population: Agent[] = [];
   private generation = 1;
@@ -182,7 +185,11 @@ export class SnakeTrainer {
     return x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE;
   }
 
-  private checkForObstacle(head: Point, direction: Point, snake: Point[]): number {
+  private checkForObstacle(
+    head: Point,
+    direction: Point,
+    snake: Point[],
+  ): number {
     const checkX = head.x + direction.x;
     const checkY = head.y + direction.y;
 
@@ -199,7 +206,11 @@ export class SnakeTrainer {
     return 0;
   }
 
-  private findTailDistance(head: Point, direction: Point, snake: Point[]): number {
+  private findTailDistance(
+    head: Point,
+    direction: Point,
+    snake: Point[],
+  ): number {
     for (let distance = 1; distance <= GRID_SIZE; distance++) {
       const x = head.x + direction.x * distance;
       const y = head.y + direction.y * distance;
@@ -326,7 +337,7 @@ export class SnakeTrainer {
         return;
       }
 
-      agent.hunger = BASE_HUNGER + agent.score * 25;
+      agent.hunger = BASE_HUNGER;
       agent.food = this.randomFood(agent.body);
     } else {
       agent.body.pop();
@@ -338,10 +349,10 @@ export class SnakeTrainer {
   }
 
   private fitness(agent: Agent): number {
-    const foodReward = agent.score * FITNESS_FOOD_REWARD;
-    const deathPenalty = agent.alive ? 0 : FITNESS_DEATH_PENALTY;
-    const stepPenalty = agent.steps * FITNESS_STEP_PENALTY;
-    return foodReward + deathPenalty + stepPenalty;
+    const foodReward = agent.score;
+    const deathPenalty = !agent.alive && agent.hunger > 0 ? 1 : 0;
+    const stepPenalty = agent.steps / GRID_CELLS;
+    return foodReward - deathPenalty - stepPenalty;
   }
 
   private crossover(a: Genome, b: Genome): Genome {
@@ -361,7 +372,10 @@ export class SnakeTrainer {
   }
 
   private pickParent(ranked: Agent[]): Agent {
-    const poolSize = Math.max(2, Math.floor(ranked.length * TOURNAMENT_POOL_RATIO));
+    const poolSize = Math.max(
+      2,
+      Math.floor(ranked.length * TOURNAMENT_POOL_RATIO),
+    );
     let winner = ranked[this.randomIndex(poolSize)];
 
     for (let i = 1; i < TOURNAMENT_SIZE; i++) {
