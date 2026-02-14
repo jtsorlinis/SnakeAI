@@ -1,0 +1,415 @@
+import {
+  BASE_HUNGER,
+  DIRS,
+  ELITE_COUNT,
+  GENE_COUNT,
+  GRID_SIZE,
+  HIDDEN,
+  INPUTS,
+  MUTATION_RATE,
+  MUTATION_SIZE,
+  OFFSET_H_BIAS,
+  OFFSET_HO,
+  OFFSET_IH,
+  OFFSET_O_BIAS,
+  OUTPUTS,
+  POP_SIZE,
+  TOURNAMENT_SIZE,
+} from "./config";
+import type { Agent, Genome, NetworkActivations, Point, TrainerState } from "./types";
+
+const CLEARANCE_NORMALIZER = Math.max(1, GRID_SIZE - 1);
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+export class SnakeTrainer {
+  private population: Agent[] = [];
+  private generation = 1;
+  private bestEverScore = 0;
+  private bestEverFitness = 0;
+  private bestFitnessGen = 1;
+  private history: number[] = [];
+
+  private showcaseGenome: Genome | null = null;
+  private showcaseAgent: Agent | null = null;
+
+  private readonly senseBuffer = new Float32Array(INPUTS);
+  private readonly hiddenBuffer = new Float32Array(HIDDEN);
+  private readonly vizInputs = new Float32Array(INPUTS);
+  private readonly vizHidden = new Float32Array(HIDDEN);
+  private readonly vizOutputs = new Float32Array(OUTPUTS);
+
+  constructor() {
+    for (let i = 0; i < POP_SIZE; i++) {
+      this.population.push(this.createAgent());
+    }
+    this.setShowcaseGenome(this.population[0].genome);
+  }
+
+  public simulate(stepCount: number): void {
+    for (let i = 0; i < stepCount; i++) {
+      let alive = 0;
+
+      for (const agent of this.population) {
+        if (!agent.alive) {
+          continue;
+        }
+
+        this.step(agent);
+        if (agent.alive) {
+          alive += 1;
+        }
+      }
+
+      if (alive === 0) {
+        this.evolve();
+      }
+
+      if (this.showcaseAgent) {
+        this.step(this.showcaseAgent);
+      }
+
+      if (!this.showcaseAgent?.alive && this.showcaseGenome) {
+        this.showcaseAgent = this.createAgent(this.showcaseGenome);
+      }
+    }
+  }
+
+  public getState(): TrainerState {
+    let alive = 0;
+    for (const agent of this.population) {
+      if (agent.alive) {
+        alive += 1;
+      }
+    }
+
+    const boardAgent = this.showcaseAgent ?? this.population[0];
+
+    return {
+      boardAgent,
+      history: this.history,
+      generation: this.generation,
+      alive,
+      populationSize: POP_SIZE,
+      bestEverScore: this.bestEverScore,
+      bestEverFitness: this.bestEverFitness,
+      staleGenerations: Math.max(0, this.generation - this.bestFitnessGen),
+      network: this.getNetworkState(),
+    };
+  }
+
+  private getNetworkState(): {
+    genome: Genome | null;
+    activations: NetworkActivations | null;
+  } {
+    if (!this.showcaseGenome) {
+      return { genome: null, activations: null };
+    }
+
+    return {
+      genome: this.showcaseGenome,
+      activations: this.computeNetworkActivations(
+        this.showcaseGenome,
+        this.showcaseAgent,
+      ),
+    };
+  }
+
+  private randomGenome(): Genome {
+    const genome = new Float32Array(GENE_COUNT);
+    for (let i = 0; i < genome.length; i++) {
+      genome[i] = Math.random() * 2 - 1;
+    }
+    return genome;
+  }
+
+  private createAgent(genome?: Genome): Agent {
+    const x = Math.floor(GRID_SIZE / 2);
+    const y = Math.floor(GRID_SIZE / 2);
+    const body = [
+      { x, y },
+      { x: x - 1, y },
+      { x: x - 2, y },
+    ];
+
+    return {
+      genome: genome ? new Float32Array(genome) : this.randomGenome(),
+      body,
+      dir: 1,
+      food: this.randomFood(body),
+      alive: true,
+      score: 0,
+      steps: 0,
+      hunger: BASE_HUNGER,
+      fitness: 0,
+    };
+  }
+
+  private setShowcaseGenome(genome: Genome): void {
+    this.showcaseGenome = new Float32Array(genome);
+    this.showcaseAgent = this.createAgent(this.showcaseGenome);
+  }
+
+  private randomFood(body: Point[]): Point {
+    while (true) {
+      const point = {
+        x: Math.floor(Math.random() * GRID_SIZE),
+        y: Math.floor(Math.random() * GRID_SIZE),
+      };
+      if (!this.pointInBody(body, point, body.length)) {
+        return point;
+      }
+    }
+  }
+
+  private pointInBody(body: Point[], point: Point, len: number): boolean {
+    for (let i = 0; i < len; i++) {
+      const part = body[i];
+      if (part.x === point.x && part.y === point.y) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private clearance(head: Point, direction: Point, snake: Point[]): number {
+    let x = head.x;
+    let y = head.y;
+    let distance = 0;
+
+    while (true) {
+      x += direction.x;
+      y += direction.y;
+
+      if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) {
+        return distance;
+      }
+
+      for (let i = 1; i < snake.length; i++) {
+        if (snake[i].x === x && snake[i].y === y) {
+          return distance;
+        }
+      }
+
+      distance += 1;
+    }
+  }
+
+  private senseInto(agent: Agent, target: Float32Array): void {
+    const head = agent.body[0];
+    const front = DIRS[agent.dir];
+    const left = DIRS[(agent.dir + 3) % 4];
+    const right = DIRS[(agent.dir + 1) % 4];
+
+    const frontClear = this.clearance(head, front, agent.body);
+    const leftClear = this.clearance(head, left, agent.body);
+    const rightClear = this.clearance(head, right, agent.body);
+
+    target[0] = frontClear === 0 ? 1 : 0;
+    target[1] = leftClear === 0 ? 1 : 0;
+    target[2] = rightClear === 0 ? 1 : 0;
+
+    target[3] = frontClear / CLEARANCE_NORMALIZER;
+    target[4] = leftClear / CLEARANCE_NORMALIZER;
+    target[5] = rightClear / CLEARANCE_NORMALIZER;
+
+    const dx = agent.food.x - head.x;
+    const dy = agent.food.y - head.y;
+    const forwardFood = (dx * front.x + dy * front.y) / GRID_SIZE;
+    const sidewaysFood = (dx * left.x + dy * left.y) / GRID_SIZE;
+
+    target[6] = clamp(forwardFood, -1, 1);
+    target[7] = clamp(sidewaysFood, -1, 1);
+  }
+
+  private runNetwork(
+    genome: Genome,
+    inputs: Float32Array,
+    hiddenTarget: Float32Array,
+    outputTarget?: Float32Array,
+  ): number {
+    for (let h = 0; h < HIDDEN; h++) {
+      let sum = genome[OFFSET_H_BIAS + h];
+      const wOffset = OFFSET_IH + h * INPUTS;
+      for (let i = 0; i < INPUTS; i++) {
+        sum += genome[wOffset + i] * inputs[i];
+      }
+      hiddenTarget[h] = Math.tanh(sum);
+    }
+
+    let bestAction = 0;
+    let bestValue = Number.NEGATIVE_INFINITY;
+
+    for (let output = 0; output < OUTPUTS; output++) {
+      let value = genome[OFFSET_O_BIAS + output];
+      const wOffset = OFFSET_HO + output * HIDDEN;
+      for (let h = 0; h < HIDDEN; h++) {
+        value += genome[wOffset + h] * hiddenTarget[h];
+      }
+
+      if (outputTarget) {
+        outputTarget[output] = value;
+      }
+
+      if (value > bestValue) {
+        bestValue = value;
+        bestAction = output;
+      }
+    }
+
+    return bestAction;
+  }
+
+  private chooseAction(agent: Agent): number {
+    this.senseInto(agent, this.senseBuffer);
+    return this.runNetwork(agent.genome, this.senseBuffer, this.hiddenBuffer);
+  }
+
+  private step(agent: Agent): void {
+    if (!agent.alive) {
+      return;
+    }
+
+    const action = this.chooseAction(agent);
+    if (action === 1) {
+      agent.dir = (agent.dir + 3) % 4;
+    } else if (action === 2) {
+      agent.dir = (agent.dir + 1) % 4;
+    }
+
+    const move = DIRS[agent.dir];
+    const head = agent.body[0];
+    const next = { x: head.x + move.x, y: head.y + move.y };
+
+    agent.steps += 1;
+    agent.hunger -= 1;
+
+    if (next.x < 0 || next.x >= GRID_SIZE || next.y < 0 || next.y >= GRID_SIZE) {
+      agent.alive = false;
+      return;
+    }
+
+    const ate = next.x === agent.food.x && next.y === agent.food.y;
+    const len = ate ? agent.body.length : agent.body.length - 1;
+
+    if (this.pointInBody(agent.body, next, len)) {
+      agent.alive = false;
+      return;
+    }
+
+    agent.body.unshift(next);
+
+    if (ate) {
+      agent.score += 1;
+      agent.hunger = BASE_HUNGER + agent.score * 25;
+      agent.food = this.randomFood(agent.body);
+    } else {
+      agent.body.pop();
+    }
+
+    if (agent.hunger <= 0) {
+      agent.alive = false;
+    }
+  }
+
+  private fitness(agent: Agent): number {
+    const head = agent.body[0];
+    const dist = Math.abs(head.x - agent.food.x) + Math.abs(head.y - agent.food.y);
+    return agent.score * agent.score * 200 + agent.steps - dist;
+  }
+
+  private crossover(a: Genome, b: Genome): Genome {
+    const child = new Float32Array(GENE_COUNT);
+    for (let i = 0; i < GENE_COUNT; i++) {
+      child[i] = Math.random() < 0.5 ? a[i] : b[i];
+    }
+    return child;
+  }
+
+  private mutate(genome: Genome, rate: number, amount: number): void {
+    for (let i = 0; i < genome.length; i++) {
+      if (Math.random() < rate) {
+        genome[i] += (Math.random() * 2 - 1) * amount;
+      }
+    }
+  }
+
+  private pickParent(ranked: Agent[]): Agent {
+    const poolSize = Math.max(2, Math.floor(ranked.length * 0.4));
+    let winner = ranked[Math.floor(Math.random() * poolSize)];
+
+    for (let i = 1; i < TOURNAMENT_SIZE; i++) {
+      const challenger = ranked[Math.floor(Math.random() * poolSize)];
+      if (challenger.fitness > winner.fitness) {
+        winner = challenger;
+      }
+    }
+
+    return winner;
+  }
+
+  private evolve(): void {
+    for (const agent of this.population) {
+      agent.fitness = this.fitness(agent);
+    }
+
+    const ranked = [...this.population].sort((a, b) => b.fitness - a.fitness);
+    const best = ranked[0];
+
+    this.bestEverScore = Math.max(this.bestEverScore, best.score);
+    if (this.generation === 1 || best.fitness > this.bestEverFitness) {
+      this.bestEverFitness = best.fitness;
+      this.bestFitnessGen = this.generation;
+      this.setShowcaseGenome(best.genome);
+    }
+
+    this.history.push(best.score);
+    if (this.history.length > 240) {
+      this.history.shift();
+    }
+
+    const next: Agent[] = [];
+
+    for (let i = 0; i < ELITE_COUNT; i++) {
+      next.push(this.createAgent(ranked[i].genome));
+    }
+
+    while (next.length < POP_SIZE) {
+      const parentA = this.pickParent(ranked);
+      const parentB = this.pickParent(ranked);
+      const child = this.crossover(parentA.genome, parentB.genome);
+      this.mutate(child, MUTATION_RATE, MUTATION_SIZE);
+      next.push(this.createAgent(child));
+    }
+
+    this.population = next;
+    this.generation += 1;
+  }
+
+  private computeNetworkActivations(
+    genome: Genome,
+    agent: Agent | null,
+  ): NetworkActivations {
+    if (agent) {
+      this.senseInto(agent, this.vizInputs);
+    } else {
+      this.vizInputs.fill(0);
+    }
+
+    const best = this.runNetwork(
+      genome,
+      this.vizInputs,
+      this.vizHidden,
+      this.vizOutputs,
+    );
+
+    return {
+      input: this.vizInputs,
+      hidden: this.vizHidden,
+      output: this.vizOutputs,
+      best,
+    };
+  }
+}
