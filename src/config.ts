@@ -3,6 +3,7 @@ import type { Point } from "./types";
 export const GRID_SIZE = 20;
 export const TILE_SIZE = 24;
 export const BOARD_SIZE = GRID_SIZE * TILE_SIZE;
+export const MAX_SCORE = GRID_SIZE * GRID_SIZE - 3;
 
 export const NET_WIDTH = 480;
 export const NET_HEIGHT = 480;
@@ -19,7 +20,7 @@ export const BASE_HUNGER = GRID_SIZE * 2;
 export const NORMAL_STEPS_PER_SECOND = 30;
 export const TURBO_TIME_BUDGET_MS = 12;
 
-export const INPUTS = 8;
+export const INPUTS = 11;
 export const HIDDEN = 10;
 export const OUTPUTS = 3;
 
@@ -40,11 +41,14 @@ export const INPUT_LABELS = [
   "Front blocked",
   "Left blocked",
   "Right blocked",
-  "Front clearance",
-  "Left clearance",
-  "Right clearance",
-  "Food forward",
-  "Food left/right",
+  "1/Dist front",
+  "1/Dist left",
+  "1/Dist right",
+  "Food x > head x",
+  "Food y > head y",
+  "Dir up",
+  "Dir right",
+  "Dir down",
 ] as const;
 
 export const OUTPUT_LABELS = ["Straight", "Turn left", "Turn right"] as const;

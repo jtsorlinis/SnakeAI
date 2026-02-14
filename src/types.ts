@@ -35,12 +35,3 @@ export type TrainerState = {
     activations: NetworkActivations | null;
   };
 };
-
-export type NetEdge = {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  weight: number;
-  label: string;
-};

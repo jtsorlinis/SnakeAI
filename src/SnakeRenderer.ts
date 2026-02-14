@@ -15,13 +15,22 @@ import {
   OUTPUT_LABELS,
   TILE_SIZE,
 } from "./config";
-import type { NetEdge, Point, TrainerState } from "./types";
+import type { Point, TrainerState } from "./types";
 
 type RendererElements = {
   netCanvas: HTMLCanvasElement;
   boardCanvas: HTMLCanvasElement;
   chartCanvas: HTMLCanvasElement;
   statsElement: HTMLElement;
+};
+
+type NetEdge = {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  weight: number;
+  label: string;
 };
 
 export class SnakeRenderer {

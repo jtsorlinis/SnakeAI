@@ -6,6 +6,7 @@ import {
   GRID_SIZE,
   HIDDEN,
   INPUTS,
+  MAX_SCORE,
   MUTATION_RATE,
   MUTATION_SIZE,
   OFFSET_H_BIAS,
@@ -18,11 +19,7 @@ import {
 } from "./config";
 import type { Agent, Genome, NetworkActivations, Point, TrainerState } from "./types";
 
-const CLEARANCE_NORMALIZER = Math.max(1, GRID_SIZE - 1);
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
+const TOURNAMENT_POOL_RATIO = 0.4;
 
 export class SnakeTrainer {
   private population: Agent[] = [];
@@ -86,6 +83,15 @@ export class SnakeTrainer {
     }
 
     const boardAgent = this.showcaseAgent ?? this.population[0];
+    const network = this.showcaseGenome
+      ? {
+          genome: this.showcaseGenome,
+          activations: this.computeNetworkActivations(
+            this.showcaseGenome,
+            this.showcaseAgent,
+          ),
+        }
+      : { genome: null, activations: null };
 
     return {
       boardAgent,
@@ -96,31 +102,22 @@ export class SnakeTrainer {
       bestEverScore: this.bestEverScore,
       bestEverFitness: this.bestEverFitness,
       staleGenerations: Math.max(0, this.generation - this.bestFitnessGen),
-      network: this.getNetworkState(),
+      network,
     };
   }
 
-  private getNetworkState(): {
-    genome: Genome | null;
-    activations: NetworkActivations | null;
-  } {
-    if (!this.showcaseGenome) {
-      return { genome: null, activations: null };
-    }
+  private randomRange(min: number, max: number): number {
+    return min + Math.random() * (max - min);
+  }
 
-    return {
-      genome: this.showcaseGenome,
-      activations: this.computeNetworkActivations(
-        this.showcaseGenome,
-        this.showcaseAgent,
-      ),
-    };
+  private randomIndex(maxExclusive: number): number {
+    return Math.floor(Math.random() * maxExclusive);
   }
 
   private randomGenome(): Genome {
     const genome = new Float32Array(GENE_COUNT);
     for (let i = 0; i < genome.length; i++) {
-      genome[i] = Math.random() * 2 - 1;
+      genome[i] = this.randomRange(-1, 1);
     }
     return genome;
   }
@@ -153,10 +150,14 @@ export class SnakeTrainer {
   }
 
   private randomFood(body: Point[]): Point {
+    if (body.length >= GRID_SIZE * GRID_SIZE) {
+      return { ...body[0] };
+    }
+
     while (true) {
       const point = {
-        x: Math.floor(Math.random() * GRID_SIZE),
-        y: Math.floor(Math.random() * GRID_SIZE),
+        x: this.randomIndex(GRID_SIZE),
+        y: this.randomIndex(GRID_SIZE),
       };
       if (!this.pointInBody(body, point, body.length)) {
         return point;
@@ -174,17 +175,34 @@ export class SnakeTrainer {
     return false;
   }
 
-  private clearance(head: Point, direction: Point, snake: Point[]): number {
-    let x = head.x;
-    let y = head.y;
-    let distance = 0;
+  private outOfBounds(x: number, y: number): boolean {
+    return x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE;
+  }
 
-    while (true) {
-      x += direction.x;
-      y += direction.y;
+  private checkForObstacle(head: Point, direction: Point, snake: Point[]): number {
+    const checkX = head.x + direction.x;
+    const checkY = head.y + direction.y;
 
-      if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) {
-        return distance;
+    if (this.outOfBounds(checkX, checkY)) {
+      return 1;
+    }
+
+    for (let i = 1; i < snake.length; i++) {
+      if (snake[i].x === checkX && snake[i].y === checkY) {
+        return 1;
+      }
+    }
+
+    return 0;
+  }
+
+  private findTailDistance(head: Point, direction: Point, snake: Point[]): number {
+    for (let distance = 1; distance <= GRID_SIZE; distance++) {
+      const x = head.x + direction.x * distance;
+      const y = head.y + direction.y * distance;
+
+      if (this.outOfBounds(x, y)) {
+        return GRID_SIZE + 1;
       }
 
       for (let i = 1; i < snake.length; i++) {
@@ -192,9 +210,9 @@ export class SnakeTrainer {
           return distance;
         }
       }
-
-      distance += 1;
     }
+
+    return GRID_SIZE + 1;
   }
 
   private senseInto(agent: Agent, target: Float32Array): void {
@@ -203,25 +221,18 @@ export class SnakeTrainer {
     const left = DIRS[(agent.dir + 3) % 4];
     const right = DIRS[(agent.dir + 1) % 4];
 
-    const frontClear = this.clearance(head, front, agent.body);
-    const leftClear = this.clearance(head, left, agent.body);
-    const rightClear = this.clearance(head, right, agent.body);
+    target[0] = this.checkForObstacle(head, front, agent.body);
+    target[1] = this.checkForObstacle(head, left, agent.body);
+    target[2] = this.checkForObstacle(head, right, agent.body);
+    target[3] = 1 / this.findTailDistance(head, front, agent.body);
+    target[4] = 1 / this.findTailDistance(head, left, agent.body);
+    target[5] = 1 / this.findTailDistance(head, right, agent.body);
 
-    target[0] = frontClear === 0 ? 1 : 0;
-    target[1] = leftClear === 0 ? 1 : 0;
-    target[2] = rightClear === 0 ? 1 : 0;
-
-    target[3] = frontClear / CLEARANCE_NORMALIZER;
-    target[4] = leftClear / CLEARANCE_NORMALIZER;
-    target[5] = rightClear / CLEARANCE_NORMALIZER;
-
-    const dx = agent.food.x - head.x;
-    const dy = agent.food.y - head.y;
-    const forwardFood = (dx * front.x + dy * front.y) / GRID_SIZE;
-    const sidewaysFood = (dx * left.x + dy * left.y) / GRID_SIZE;
-
-    target[6] = clamp(forwardFood, -1, 1);
-    target[7] = clamp(sidewaysFood, -1, 1);
+    target[6] = agent.food.x > head.x ? 1 : 0;
+    target[7] = agent.food.y > head.y ? 1 : 0;
+    target[8] = agent.dir === 0 ? 1 : 0;
+    target[9] = agent.dir === 1 ? 1 : 0;
+    target[10] = agent.dir === 2 ? 1 : 0;
   }
 
   private runNetwork(
@@ -273,10 +284,13 @@ export class SnakeTrainer {
     }
 
     const action = this.chooseAction(agent);
-    if (action === 1) {
-      agent.dir = (agent.dir + 3) % 4;
-    } else if (action === 2) {
-      agent.dir = (agent.dir + 1) % 4;
+    switch (action) {
+      case 1:
+        agent.dir = (agent.dir + 3) % 4;
+        break;
+      case 2:
+        agent.dir = (agent.dir + 1) % 4;
+        break;
     }
 
     const move = DIRS[agent.dir];
@@ -286,7 +300,7 @@ export class SnakeTrainer {
     agent.steps += 1;
     agent.hunger -= 1;
 
-    if (next.x < 0 || next.x >= GRID_SIZE || next.y < 0 || next.y >= GRID_SIZE) {
+    if (this.outOfBounds(next.x, next.y)) {
       agent.alive = false;
       return;
     }
@@ -303,6 +317,12 @@ export class SnakeTrainer {
 
     if (ate) {
       agent.score += 1;
+
+      if (agent.score >= MAX_SCORE) {
+        agent.alive = false;
+        return;
+      }
+
       agent.hunger = BASE_HUNGER + agent.score * 25;
       agent.food = this.randomFood(agent.body);
     } else {
@@ -328,20 +348,20 @@ export class SnakeTrainer {
     return child;
   }
 
-  private mutate(genome: Genome, rate: number, amount: number): void {
+  private mutate(genome: Genome): void {
     for (let i = 0; i < genome.length; i++) {
-      if (Math.random() < rate) {
-        genome[i] += (Math.random() * 2 - 1) * amount;
+      if (Math.random() < MUTATION_RATE) {
+        genome[i] += this.randomRange(-MUTATION_SIZE, MUTATION_SIZE);
       }
     }
   }
 
   private pickParent(ranked: Agent[]): Agent {
-    const poolSize = Math.max(2, Math.floor(ranked.length * 0.4));
-    let winner = ranked[Math.floor(Math.random() * poolSize)];
+    const poolSize = Math.max(2, Math.floor(ranked.length * TOURNAMENT_POOL_RATIO));
+    let winner = ranked[this.randomIndex(poolSize)];
 
     for (let i = 1; i < TOURNAMENT_SIZE; i++) {
-      const challenger = ranked[Math.floor(Math.random() * poolSize)];
+      const challenger = ranked[this.randomIndex(poolSize)];
       if (challenger.fitness > winner.fitness) {
         winner = challenger;
       }
@@ -380,7 +400,7 @@ export class SnakeTrainer {
       const parentA = this.pickParent(ranked);
       const parentB = this.pickParent(ranked);
       const child = this.crossover(parentA.genome, parentB.genome);
-      this.mutate(child, MUTATION_RATE, MUTATION_SIZE);
+      this.mutate(child);
       next.push(this.createAgent(child));
     }
 
