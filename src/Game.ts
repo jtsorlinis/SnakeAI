@@ -22,11 +22,11 @@ type Agent = {
   fitness: number;
 };
 
-const GRID_SIZE = 18;
+const GRID_SIZE = 20;
 const TILE_SIZE = 24;
 const BOARD_SIZE = GRID_SIZE * TILE_SIZE;
 const NET_WIDTH = 480;
-const NET_HEIGHT = 432;
+const NET_HEIGHT = 480;
 const CHART_WIDTH = 300;
 const CHART_HEIGHT = 140;
 

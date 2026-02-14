@@ -46,15 +46,15 @@ canvas {
 }
 
 #gameCanvas {
-  width: min(90vw, 432px);
-  height: min(90vw, 432px);
+  width: min(90vw, 480px);
+  height: min(90vw, 480px);
   border: 4px solid #333;
   background: #000;
 }
 
 #netCanvas {
   width: min(95vw, 480px);
-  height: min(90vw, 432px);
+  height: min(90vw, 480px);
   border: 4px solid #333;
   background: #000;
 }
