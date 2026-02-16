@@ -450,7 +450,7 @@ export class SnakeTrainer {
     }
 
     this.history.push(best.score);
-    if (this.history.length > 240) {
+    if (this.history.length > 500) {
       this.history.shift();
     }
 
