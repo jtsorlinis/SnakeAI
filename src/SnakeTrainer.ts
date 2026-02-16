@@ -4,12 +4,14 @@ import {
   ELITE_COUNT,
   GENE_COUNT,
   GRID_SIZE,
-  HIDDEN,
+  HIDDEN_LAYERS,
+  HIDDEN_LAYER_UNITS,
   INPUTS,
   MAX_SCORE,
   MUTATION_RATE,
   MUTATION_SIZE,
   OFFSET_H_BIAS,
+  OFFSET_HH,
   OFFSET_HO,
   OFFSET_IH,
   OFFSET_O_BIAS,
@@ -26,7 +28,6 @@ import type {
 } from "./types";
 
 const TOURNAMENT_POOL_RATIO = 0.4;
-const GRID_CELLS = GRID_SIZE * GRID_SIZE;
 export class SnakeTrainer {
   private population: Agent[] = [];
   private generation = 1;
@@ -39,9 +40,13 @@ export class SnakeTrainer {
   private showcaseAgent: Agent | null = null;
 
   private readonly senseBuffer = new Float32Array(INPUTS);
-  private readonly hiddenBuffer = new Float32Array(HIDDEN);
+  private readonly hiddenBuffers = HIDDEN_LAYER_UNITS.map(
+    (units) => new Float32Array(units),
+  );
   private readonly vizInputs = new Float32Array(INPUTS);
-  private readonly vizHidden = new Float32Array(HIDDEN);
+  private readonly vizHidden = HIDDEN_LAYER_UNITS.map(
+    (units) => new Float32Array(units),
+  );
   private readonly vizOutputs = new Float32Array(OUTPUTS);
 
   constructor() {
@@ -110,6 +115,18 @@ export class SnakeTrainer {
       staleGenerations: Math.max(0, this.generation - this.bestFitnessGen),
       network,
     };
+  }
+
+  public onGridSizeChanged(): void {
+    this.population = this.population.map((agent) =>
+      this.createAgent(agent.genome),
+    );
+
+    if (this.showcaseGenome) {
+      this.showcaseAgent = this.createAgent(this.showcaseGenome);
+    } else {
+      this.showcaseAgent = null;
+    }
   }
 
   private randomRange(min: number, max: number): number {
@@ -252,26 +269,55 @@ export class SnakeTrainer {
   private runNetwork(
     genome: Genome,
     inputs: Float32Array,
-    hiddenTarget: Float32Array,
+    hiddenTarget: Float32Array[],
     outputTarget?: Float32Array,
   ): number {
-    for (let h = 0; h < HIDDEN; h++) {
-      let sum = genome[OFFSET_H_BIAS + h];
-      const wOffset = OFFSET_IH + h * INPUTS;
-      for (let i = 0; i < INPUTS; i++) {
-        sum += genome[wOffset + i] * inputs[i];
+    if (HIDDEN_LAYERS > 0) {
+      const firstLayerSize = HIDDEN_LAYER_UNITS[0];
+      const firstHidden = hiddenTarget[0];
+      for (let h = 0; h < firstLayerSize; h++) {
+        let sum = genome[OFFSET_H_BIAS + h];
+        const wOffset = OFFSET_IH + h * INPUTS;
+        for (let i = 0; i < INPUTS; i++) {
+          sum += genome[wOffset + i] * inputs[i];
+        }
+        firstHidden[h] = Math.tanh(sum);
       }
-      hiddenTarget[h] = Math.tanh(sum);
+
+      let hhOffset = OFFSET_HH;
+      let biasOffset = OFFSET_H_BIAS + firstLayerSize;
+      for (let layer = 1; layer < HIDDEN_LAYERS; layer++) {
+        const prev = hiddenTarget[layer - 1];
+        const current = hiddenTarget[layer];
+        const prevSize = HIDDEN_LAYER_UNITS[layer - 1];
+        const currentSize = HIDDEN_LAYER_UNITS[layer];
+
+        for (let h = 0; h < currentSize; h++) {
+          let sum = genome[biasOffset + h];
+          const wOffset = hhOffset + h * prevSize;
+          for (let k = 0; k < prevSize; k++) {
+            sum += genome[wOffset + k] * prev[k];
+          }
+          current[h] = Math.tanh(sum);
+        }
+
+        hhOffset += prevSize * currentSize;
+        biasOffset += currentSize;
+      }
     }
 
     let bestAction = 0;
     let bestValue = Number.NEGATIVE_INFINITY;
+    const outputInputs =
+      HIDDEN_LAYERS > 0 ? hiddenTarget[HIDDEN_LAYERS - 1] : inputs;
+    const outputInputSize =
+      HIDDEN_LAYERS > 0 ? HIDDEN_LAYER_UNITS[HIDDEN_LAYERS - 1] : INPUTS;
 
     for (let output = 0; output < OUTPUTS; output++) {
       let value = genome[OFFSET_O_BIAS + output];
-      const wOffset = OFFSET_HO + output * HIDDEN;
-      for (let h = 0; h < HIDDEN; h++) {
-        value += genome[wOffset + h] * hiddenTarget[h];
+      const wOffset = OFFSET_HO + output * outputInputSize;
+      for (let h = 0; h < outputInputSize; h++) {
+        value += genome[wOffset + h] * outputInputs[h];
       }
 
       if (outputTarget) {
@@ -289,7 +335,7 @@ export class SnakeTrainer {
 
   private chooseAction(agent: Agent): number {
     this.senseInto(agent, this.senseBuffer);
-    return this.runNetwork(agent.genome, this.senseBuffer, this.hiddenBuffer);
+    return this.runNetwork(agent.genome, this.senseBuffer, this.hiddenBuffers);
   }
 
   private step(agent: Agent): void {
@@ -351,7 +397,7 @@ export class SnakeTrainer {
   private fitness(agent: Agent): number {
     const foodReward = agent.score;
     const deathPenalty = !agent.alive && agent.hunger > 0 ? 1 : 0;
-    const stepPenalty = agent.steps / GRID_CELLS;
+    const stepPenalty = agent.steps / (GRID_SIZE * GRID_SIZE);
     return foodReward - deathPenalty - stepPenalty;
   }
 

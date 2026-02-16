@@ -20,6 +20,20 @@
           <input id="networkToggle" type="checkbox" checked />
           <label for="networkToggle">Show network</label>
         </div>
+        <div class="control-grid">
+          <div class="hidden-controls">
+            <span class="control-label">Grid size</span>
+            <div class="hidden-buttons">
+              <button id="gridDown" type="button" aria-label="Decrease grid size">
+                -
+              </button>
+              <span id="gridValue">10x10</span>
+              <button id="gridUp" type="button" aria-label="Increase grid size">
+                +
+              </button>
+            </div>
+          </div>
+        </div>
         <canvas id="chartCanvas" aria-label="Generation history"></canvas>
       </section>
     </main>

@@ -2,12 +2,14 @@ import {
   BOARD_SIZE,
   CHART_HEIGHT,
   CHART_WIDTH,
-  HIDDEN,
+  GRID_SIZE,
+  HIDDEN_LAYER_UNITS,
   INPUTS,
   INPUT_LABELS,
   NET_HEIGHT,
   NET_HOVER_RADIUS,
   NET_WIDTH,
+  OFFSET_HH,
   OFFSET_HO,
   OFFSET_IH,
   OFFSET_O_BIAS,
@@ -89,6 +91,8 @@ export class SnakeRenderer {
   }
 
   public render(state: TrainerState): void {
+    this.syncBoardSize();
+
     if (this.showNetwork) {
       this.drawNetwork(state);
     }
@@ -96,6 +100,13 @@ export class SnakeRenderer {
     this.drawBoard(state);
     this.drawHistory(state.history);
     this.updateStats(state);
+  }
+
+  private syncBoardSize(): void {
+    if (this.board.width !== BOARD_SIZE || this.board.height !== BOARD_SIZE) {
+      this.board.width = BOARD_SIZE;
+      this.board.height = BOARD_SIZE;
+    }
   }
 
   private segmentDistanceSquared(
@@ -142,22 +153,34 @@ export class SnakeRenderer {
       outputAbsMax = Math.max(outputAbsMax, Math.abs(activations.output[o]));
     }
 
+    const hiddenLayerCount = HIDDEN_LAYER_UNITS.length;
     const top = 24;
     const bottom = NET_HEIGHT - 24;
-    const inputX = 120;
-    const hiddenX = NET_WIDTH / 2;
-    const outputX = NET_WIDTH - 120;
+    const inputX = 84;
+    const outputX = NET_WIDTH - 84;
 
     const inputY: number[] = [];
-    const hiddenY: number[] = [];
+    const hiddenX: number[] = [];
+    const hiddenY: number[][] = [];
     const outputY: number[] = [];
 
     for (let i = 0; i < INPUTS; i++) {
       inputY.push(top + (i * (bottom - top)) / Math.max(1, INPUTS - 1));
     }
 
-    for (let h = 0; h < HIDDEN; h++) {
-      hiddenY.push(top + (h * (bottom - top)) / Math.max(1, HIDDEN - 1));
+    for (let layer = 0; layer < hiddenLayerCount; layer++) {
+      hiddenX.push(
+        inputX + ((layer + 1) * (outputX - inputX)) / (hiddenLayerCount + 1),
+      );
+    }
+
+    for (let layer = 0; layer < hiddenLayerCount; layer++) {
+      const units = HIDDEN_LAYER_UNITS[layer];
+      const positions: number[] = [];
+      for (let h = 0; h < units; h++) {
+        positions.push(top + (h * (bottom - top)) / Math.max(1, units - 1));
+      }
+      hiddenY.push(positions);
     }
 
     for (let o = 0; o < OUTPUTS; o++) {
@@ -166,31 +189,79 @@ export class SnakeRenderer {
 
     const edges: NetEdge[] = [];
 
-    for (let h = 0; h < HIDDEN; h++) {
-      const wOffset = OFFSET_IH + h * INPUTS;
-      for (let i = 0; i < INPUTS; i++) {
-        edges.push({
-          x1: inputX,
-          y1: inputY[i],
-          x2: hiddenX,
-          y2: hiddenY[h],
-          weight: genome[wOffset + i],
-          label: `${INPUT_LABELS[i]} -> H${h + 1}`,
-        });
+    if (hiddenLayerCount > 0) {
+      const firstHiddenX = hiddenX[0];
+      const firstHiddenY = hiddenY[0];
+      const firstSize = HIDDEN_LAYER_UNITS[0];
+      for (let h = 0; h < firstSize; h++) {
+        const wOffset = OFFSET_IH + h * INPUTS;
+        for (let i = 0; i < INPUTS; i++) {
+          edges.push({
+            x1: inputX,
+            y1: inputY[i],
+            x2: firstHiddenX,
+            y2: firstHiddenY[h],
+            weight: genome[wOffset + i],
+            label: `${INPUT_LABELS[i]} -> H1:${h + 1}`,
+          });
+        }
       }
-    }
 
-    for (let o = 0; o < OUTPUTS; o++) {
-      const wOffset = OFFSET_HO + o * HIDDEN;
-      for (let h = 0; h < HIDDEN; h++) {
-        edges.push({
-          x1: hiddenX,
-          y1: hiddenY[h],
-          x2: outputX,
-          y2: outputY[o],
-          weight: genome[wOffset + h],
-          label: `H${h + 1} -> ${OUTPUT_LABELS[o]}`,
-        });
+      let hhOffset = OFFSET_HH;
+      for (let layer = 1; layer < hiddenLayerCount; layer++) {
+        const prevSize = HIDDEN_LAYER_UNITS[layer - 1];
+        const currSize = HIDDEN_LAYER_UNITS[layer];
+        const fromX = hiddenX[layer - 1];
+        const toX = hiddenX[layer];
+        const fromY = hiddenY[layer - 1];
+        const toY = hiddenY[layer];
+
+        for (let to = 0; to < currSize; to++) {
+          const wOffset = hhOffset + to * prevSize;
+          for (let from = 0; from < prevSize; from++) {
+            edges.push({
+              x1: fromX,
+              y1: fromY[from],
+              x2: toX,
+              y2: toY[to],
+              weight: genome[wOffset + from],
+              label: `H${layer}:${from + 1} -> H${layer + 1}:${to + 1}`,
+            });
+          }
+        }
+
+        hhOffset += prevSize * currSize;
+      }
+
+      const lastHiddenX = hiddenX[hiddenLayerCount - 1];
+      const lastHiddenY = hiddenY[hiddenLayerCount - 1];
+      const lastSize = HIDDEN_LAYER_UNITS[hiddenLayerCount - 1];
+      for (let o = 0; o < OUTPUTS; o++) {
+        const wOffset = OFFSET_HO + o * lastSize;
+        for (let h = 0; h < lastSize; h++) {
+          edges.push({
+            x1: lastHiddenX,
+            y1: lastHiddenY[h],
+            x2: outputX,
+            y2: outputY[o],
+            weight: genome[wOffset + h],
+            label: `H${hiddenLayerCount}:${h + 1} -> ${OUTPUT_LABELS[o]}`,
+          });
+        }
+      }
+    } else {
+      for (let o = 0; o < OUTPUTS; o++) {
+        const wOffset = OFFSET_HO + o * INPUTS;
+        for (let i = 0; i < INPUTS; i++) {
+          edges.push({
+            x1: inputX,
+            y1: inputY[i],
+            x2: outputX,
+            y2: outputY[o],
+            weight: genome[wOffset + i],
+            label: `${INPUT_LABELS[i]} -> ${OUTPUT_LABELS[o]}`,
+          });
+        }
       }
     }
 
@@ -246,7 +317,12 @@ export class SnakeRenderer {
     this.netCtx.fillStyle = "rgba(255, 255, 255, 0.9)";
     this.netCtx.font = "12px JetBrains Mono, monospace";
     this.netCtx.fillText("Input", inputX - 28, 14);
-    this.netCtx.fillText("Hidden", hiddenX - 22, 14);
+    for (let layer = 0; layer < hiddenLayerCount; layer++) {
+      this.netCtx.fillText(`H${layer + 1}`, hiddenX[layer] - 10, 14);
+    }
+    if (hiddenLayerCount === 0) {
+      this.netCtx.fillText("Direct", NET_WIDTH / 2 - 20, 14);
+    }
     this.netCtx.fillText("Output", outputX - 24, 14);
 
     for (let i = 0; i < INPUTS; i++) {
@@ -273,24 +349,34 @@ export class SnakeRenderer {
       this.netCtx.fillText(INPUT_LABELS[i], 6, inputY[i] + 3);
     }
 
-    for (let h = 0; h < HIDDEN; h++) {
-      const value = activations.hidden[h];
-      const intensity = Math.min(1, Math.abs(value));
+    for (let layer = 0; layer < hiddenLayerCount; layer++) {
+      const layerActivation = activations.hidden[layer];
+      const layerY = hiddenY[layer];
+      for (let h = 0; h < layerY.length; h++) {
+        const value = layerActivation[h];
+        const intensity = Math.min(1, Math.abs(value));
 
-      if (intensity > 0.02) {
-        this.netCtx.fillStyle =
-          value >= 0
-            ? `rgba(76, 175, 80, ${0.1 + intensity * 0.6})`
-            : `rgba(244, 67, 54, ${0.1 + intensity * 0.6})`;
+        if (intensity > 0.02) {
+          this.netCtx.fillStyle =
+            value >= 0
+              ? `rgba(76, 175, 80, ${0.1 + intensity * 0.6})`
+              : `rgba(244, 67, 54, ${0.1 + intensity * 0.6})`;
+          this.netCtx.beginPath();
+          this.netCtx.arc(
+            hiddenX[layer],
+            layerY[h],
+            7 + intensity * 4,
+            0,
+            Math.PI * 2,
+          );
+          this.netCtx.fill();
+        }
+
+        this.netCtx.fillStyle = value >= 0 ? "#26a69a" : "#ef5350";
         this.netCtx.beginPath();
-        this.netCtx.arc(hiddenX, hiddenY[h], 7 + intensity * 4, 0, Math.PI * 2);
+        this.netCtx.arc(hiddenX[layer], layerY[h], 5, 0, Math.PI * 2);
         this.netCtx.fill();
       }
-
-      this.netCtx.fillStyle = value >= 0 ? "#26a69a" : "#ef5350";
-      this.netCtx.beginPath();
-      this.netCtx.arc(hiddenX, hiddenY[h], 5, 0, Math.PI * 2);
-      this.netCtx.fill();
     }
 
     for (let o = 0; o < OUTPUTS; o++) {
@@ -325,7 +411,11 @@ export class SnakeRenderer {
       this.netCtx.fillText(OUTPUT_LABELS[o], outputX + 12, outputY[o] + 3);
       this.netCtx.fillStyle = "rgba(255, 255, 255, 0.65)";
       this.netCtx.font = "9px JetBrains Mono, monospace";
-      this.netCtx.fillText(`b=${genome[OFFSET_O_BIAS + o].toFixed(2)}`, outputX + 12, outputY[o] + 14);
+      this.netCtx.fillText(
+        `b=${genome[OFFSET_O_BIAS + o].toFixed(2)}`,
+        outputX + 12,
+        outputY[o] + 14,
+      );
       this.netCtx.fillText(`a=${value.toFixed(2)}`, outputX + 12, outputY[o] + 24);
     }
 
@@ -448,6 +538,7 @@ export class SnakeRenderer {
     this.stats.innerHTML = [
       `Generation: <strong>${state.generation}</strong>`,
       `Alive: ${state.alive}/${state.populationSize}`,
+      `Grid: ${GRID_SIZE}x${GRID_SIZE}`,
       `Best score: ${state.bestEverScore}`,
       `Best fitness: ${state.bestEverFitness.toFixed(1)}`,
       `Stale: ${state.staleGenerations}`,

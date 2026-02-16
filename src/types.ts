@@ -16,7 +16,7 @@ export type Agent = {
 
 export type NetworkActivations = {
   input: Float32Array;
-  hidden: Float32Array;
+  hidden: Float32Array[];
   output: Float32Array;
   best: number;
 };

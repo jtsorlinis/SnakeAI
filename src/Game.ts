@@ -1,11 +1,22 @@
-import { NORMAL_STEPS_PER_SECOND, TURBO_TIME_BUDGET_MS } from "./config";
+import {
+  GRID_SIZE,
+  GRID_SIZE_STEP,
+  MAX_GRID_SIZE,
+  MIN_GRID_SIZE,
+  NORMAL_STEPS_PER_SECOND,
+  TURBO_TIME_BUDGET_MS,
+  setGridSize,
+} from "./config";
 import { SnakeRenderer } from "./SnakeRenderer";
 import { SnakeTrainer } from "./SnakeTrainer";
 
 export class Game {
-  private readonly trainer = new SnakeTrainer();
+  private trainer = new SnakeTrainer();
   private readonly renderer: SnakeRenderer;
   private readonly turboToggle: HTMLInputElement;
+  private readonly gridDownButton: HTMLButtonElement;
+  private readonly gridUpButton: HTMLButtonElement;
+  private readonly gridValue: HTMLElement;
 
   private turboMode = false;
   private stepBudget = 0;
@@ -18,6 +29,9 @@ export class Game {
     const statsElement = this.getElement("stats");
     this.turboToggle = this.getInput("turboToggle");
     const networkToggle = this.getInput("networkToggle");
+    this.gridDownButton = this.getButton("gridDown");
+    this.gridUpButton = this.getButton("gridUp");
+    this.gridValue = this.getElement("gridValue");
 
     this.renderer = new SnakeRenderer({
       netCanvas,
@@ -36,6 +50,14 @@ export class Game {
     networkToggle.addEventListener("change", () => {
       this.renderer.setShowNetwork(networkToggle.checked);
     });
+
+    this.gridDownButton.addEventListener("click", () => {
+      this.updateGridSize(-GRID_SIZE_STEP);
+    });
+    this.gridUpButton.addEventListener("click", () => {
+      this.updateGridSize(GRID_SIZE_STEP);
+    });
+    this.refreshGridControls();
 
     requestAnimationFrame(this.loop);
   }
@@ -62,6 +84,33 @@ export class Game {
       throw new Error(`Missing input: ${id}`);
     }
     return element;
+  }
+
+  private getButton(id: string): HTMLButtonElement {
+    const element = document.getElementById(id);
+    if (!(element instanceof HTMLButtonElement)) {
+      throw new Error(`Missing button: ${id}`);
+    }
+    return element;
+  }
+
+  private updateGridSize(delta: number): void {
+    const previous = GRID_SIZE;
+    const next = setGridSize(previous + delta);
+    this.refreshGridControls();
+    if (next === previous) {
+      return;
+    }
+
+    this.trainer.onGridSizeChanged();
+    this.stepBudget = 0;
+    this.lastFrameTime = 0;
+  }
+
+  private refreshGridControls(): void {
+    this.gridValue.textContent = `${GRID_SIZE}x${GRID_SIZE}`;
+    this.gridDownButton.disabled = GRID_SIZE <= MIN_GRID_SIZE;
+    this.gridUpButton.disabled = GRID_SIZE >= MAX_GRID_SIZE;
   }
 
   private loop = (time: number): void => {
