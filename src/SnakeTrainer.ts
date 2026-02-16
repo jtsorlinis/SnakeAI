@@ -261,9 +261,8 @@ export class SnakeTrainer {
 
     target[6] = agent.food.x > head.x ? 1 : 0;
     target[7] = agent.food.y > head.y ? 1 : 0;
-    target[8] = agent.dir === 0 ? 1 : 0;
-    target[9] = agent.dir === 1 ? 1 : 0;
-    target[10] = agent.dir === 2 ? 1 : 0;
+    target[8] = front.x;
+    target[9] = front.y;
   }
 
   private runNetwork(

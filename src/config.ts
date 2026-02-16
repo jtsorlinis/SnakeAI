@@ -25,7 +25,7 @@ export let BASE_HUNGER = 0;
 export const NORMAL_STEPS_PER_SECOND = 30;
 export const TURBO_TIME_BUDGET_MS = 12;
 
-export const INPUTS = 11;
+export const INPUTS = 10;
 export const OUTPUTS = 3;
 export const BASE_HIDDEN_UNITS = Math.max(
   2,
@@ -109,17 +109,16 @@ export function setGridSize(nextSize: number): number {
 export const NET_HOVER_RADIUS = 8;
 
 export const INPUT_LABELS = [
-  "Front blocked",
-  "Left blocked",
-  "Right blocked",
-  "1/Dist front",
-  "1/Dist left",
-  "1/Dist right",
-  "Food x > head x",
-  "Food y > head y",
-  "Dir up",
-  "Dir right",
-  "Dir down",
+  "Block Ahead",
+  "Block Left",
+  "Block Right",
+  "Tail Ahead",
+  "Tail Left",
+  "Tail Right",
+  "Food Right",
+  "Food Below",
+  "Dir X",
+  "Dir Y",
 ] as const;
 
 export const OUTPUT_LABELS = ["Straight", "Turn left", "Turn right"] as const;
