@@ -416,7 +416,11 @@ export class SnakeRenderer {
         outputX + 12,
         outputY[o] + 14,
       );
-      this.netCtx.fillText(`a=${value.toFixed(2)}`, outputX + 12, outputY[o] + 24);
+      this.netCtx.fillText(
+        `a=${value.toFixed(2)}`,
+        outputX + 12,
+        outputY[o] + 24,
+      );
     }
 
     if (hoveredEdge && this.netMouse) {
@@ -519,9 +523,7 @@ export class SnakeRenderer {
     for (let i = 0; i < history.length; i++) {
       const x = 10 + (i / (history.length - 1)) * (CHART_WIDTH - 20);
       const y =
-        CHART_HEIGHT -
-        10 -
-        (history[i] / maxFitness) * (CHART_HEIGHT - 20);
+        CHART_HEIGHT - 10 - (history[i] / maxFitness) * (CHART_HEIGHT - 20);
 
       if (i === 0) {
         this.chartCtx.moveTo(x, y);

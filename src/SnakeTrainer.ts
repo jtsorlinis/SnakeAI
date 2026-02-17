@@ -21,7 +21,9 @@ export class SnakeTrainer {
 
   constructor() {
     for (let i = 0; i < POP_SIZE; i++) {
-      this.population.push(this.environment.createAgent(this.ga.randomGenome()));
+      this.population.push(
+        this.environment.createAgent(this.ga.randomGenome()),
+      );
     }
     this.setShowcaseGenome(this.population[0].genome);
   }
