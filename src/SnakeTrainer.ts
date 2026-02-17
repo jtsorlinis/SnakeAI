@@ -20,12 +20,28 @@ export class SnakeTrainer {
   private showcaseAgent: Agent | null = null;
 
   constructor() {
+    this.reset();
+  }
+
+  public reset(): void {
+    this.population = [];
+    this.generation = 1;
+    this.bestEverScore = 0;
+    this.bestEverFitness = 0;
+    this.bestFitnessGen = 1;
+    this.fitnessHistory = [];
+    this.showcaseGenome = null;
+    this.showcaseAgent = null;
+
     for (let i = 0; i < POP_SIZE; i++) {
       this.population.push(
         this.environment.createAgent(this.ga.randomGenome()),
       );
     }
-    this.setShowcaseGenome(this.population[0].genome);
+
+    if (this.population.length > 0) {
+      this.setShowcaseGenome(this.population[0].genome);
+    }
   }
 
   public simulate(stepCount: number): void {
