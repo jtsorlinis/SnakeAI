@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+
+# Production
+dist/
+
+# Misc
+.DS_Store
+*.pem
+
+# IDEs and editors
+.idea/
+.project
+.classpath
+.cproject
+.settings/
+*.launch
+*.sublime-project
+*.sublime-workspace
+.vscode/
+*.code-workspace
+.history/
+
+# TypeScript
+*.tsbuildinfo
+
+# Vite
+.vite/

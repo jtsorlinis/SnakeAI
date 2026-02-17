@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Snake GA Trainer</title>
+    <script type="module" crossorigin src="/SnakeAI/assets/index-DBchDlDr.js"></script>
+    <link rel="stylesheet" crossorigin href="/SnakeAI/assets/index-BTW0DKte.css">
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="netCanvas" aria-label="Neural network"></canvas>
+      <canvas id="gameCanvas" aria-label="Snake board"></canvas>
+      <section class="panel">
+        <h1>Snake GA Trainer</h1>
+        <div id="stats" class="stats">Training...</div>
+        <div class="toggle-row">
+          <input id="turboToggle" type="checkbox" />
+          <label for="turboToggle">Turbo (max speed)</label>
+        </div>
+        <div class="toggle-row">
+          <input id="networkToggle" type="checkbox" checked />
+          <label for="networkToggle">Show network</label>
+        </div>
+        <div class="control-grid">
+          <div class="hidden-controls">
+            <span class="control-label">Grid size</span>
+            <div class="hidden-buttons">
+              <button id="gridDown" type="button" aria-label="Decrease grid size">
+                -
+              </button>
+              <span id="gridValue">10x10</span>
+              <button id="gridUp" type="button" aria-label="Increase grid size">
+                +
+              </button>
+            </div>
+          </div>
+        </div>
+        <canvas id="chartCanvas" aria-label="Generation history"></canvas>
+      </section>
+    </main>
+  </body>
+</html>
