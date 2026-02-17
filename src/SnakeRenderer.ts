@@ -98,7 +98,7 @@ export class SnakeRenderer {
     }
 
     this.drawBoard(state);
-    this.drawHistory(state.history);
+    this.drawHistory(state.fitnessHistory);
     this.updateStats(state);
   }
 
@@ -505,10 +505,10 @@ export class SnakeRenderer {
       return;
     }
 
-    let maxScore = 1;
-    for (const score of history) {
-      if (score > maxScore) {
-        maxScore = score;
+    let maxFitness = 1;
+    for (const fitness of history) {
+      if (fitness > maxFitness) {
+        maxFitness = fitness;
       }
     }
 
@@ -518,7 +518,10 @@ export class SnakeRenderer {
 
     for (let i = 0; i < history.length; i++) {
       const x = 10 + (i / (history.length - 1)) * (CHART_WIDTH - 20);
-      const y = CHART_HEIGHT - 10 - (history[i] / maxScore) * (CHART_HEIGHT - 20);
+      const y =
+        CHART_HEIGHT -
+        10 -
+        (history[i] / maxFitness) * (CHART_HEIGHT - 20);
 
       if (i === 0) {
         this.chartCtx.moveTo(x, y);
@@ -531,7 +534,11 @@ export class SnakeRenderer {
 
     this.chartCtx.fillStyle = "rgba(255, 255, 255, 0.75)";
     this.chartCtx.font = "12px IBM Plex Mono, monospace";
-    this.chartCtx.fillText(`Gen best score history (max ${maxScore})`, 10, 16);
+    this.chartCtx.fillText(
+      `Gen best fitness history (max ${maxFitness.toFixed(2)})`,
+      10,
+      16,
+    );
   }
 
   private updateStats(state: TrainerState): void {
@@ -540,7 +547,7 @@ export class SnakeRenderer {
       `Alive: ${state.alive}/${state.populationSize}`,
       `Grid: ${GRID_SIZE}x${GRID_SIZE}`,
       `Best score: ${state.bestEverScore}`,
-      `Best fitness: ${state.bestEverFitness.toFixed(1)}`,
+      `Best fitness: ${state.bestEverFitness.toFixed(2)}`,
       `Stale: ${state.staleGenerations}`,
     ].join("<br>");
   }

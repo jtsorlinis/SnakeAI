@@ -14,7 +14,7 @@ export class SnakeTrainer {
   private bestEverScore = 0;
   private bestEverFitness = 0;
   private bestFitnessGen = 1;
-  private history: number[] = [];
+  private fitnessHistory: number[] = [];
 
   private showcaseGenome: Genome | null = null;
   private showcaseAgent: Agent | null = null;
@@ -76,7 +76,7 @@ export class SnakeTrainer {
 
     return {
       boardAgent,
-      history: this.history,
+      fitnessHistory: this.fitnessHistory,
       generation: this.generation,
       alive,
       populationSize: POP_SIZE,
@@ -114,9 +114,9 @@ export class SnakeTrainer {
       this.setShowcaseGenome(best.genome);
     }
 
-    this.history.push(best.score);
-    if (this.history.length > 500) {
-      this.history.shift();
+    this.fitnessHistory.push(best.fitness);
+    if (this.fitnessHistory.length > 500) {
+      this.fitnessHistory.shift();
     }
 
     this.population = nextGenomes.map((genome) =>
