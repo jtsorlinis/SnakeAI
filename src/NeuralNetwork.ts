@@ -1,95 +1,182 @@
-import {
-  HIDDEN_LAYERS,
-  HIDDEN_LAYER_UNITS,
-  INPUTS,
-  OFFSET_H_BIAS,
-  OFFSET_HH,
-  OFFSET_HO,
-  OFFSET_IH,
-  OFFSET_O_BIAS,
-  OUTPUTS,
-} from "./config";
-import type { Genome } from "./types";
+import { INPUT_LABELS, OUTPUT_LABELS, OUTPUTS } from "./config";
+import type {
+  ConnectionGene,
+  Genome,
+  NetworkActivationEdge,
+  NetworkActivationNode,
+  NetworkActivations,
+  NodeGene,
+} from "./types";
 
-function createHiddenLayerBuffers(): Float32Array[] {
-  return HIDDEN_LAYER_UNITS.map((units) => new Float32Array(units));
-}
+type EvaluationResult = {
+  output: Float32Array;
+  best: number;
+  valuesByNodeId: Map<number, number>;
+};
 
 export class NeuralNetwork {
-  private readonly actionHiddenBuffers = createHiddenLayerBuffers();
-
   public chooseAction(genome: Genome, inputs: Float32Array): number {
-    return this.run(genome, inputs, this.actionHiddenBuffers);
+    return this.evaluate(genome, inputs).best;
   }
 
-  public run(
+  public computeActivations(
     genome: Genome,
     inputs: Float32Array,
-    hiddenTarget: Float32Array[],
-    outputTarget?: Float32Array,
-  ): number {
-    if (HIDDEN_LAYERS > 0) {
-      const firstLayerSize = HIDDEN_LAYER_UNITS[0];
-      const firstHidden = hiddenTarget[0];
-      for (let h = 0; h < firstLayerSize; h++) {
-        let sum = genome[OFFSET_H_BIAS + h];
-        const wOffset = OFFSET_IH + h * INPUTS;
-        for (let i = 0; i < INPUTS; i++) {
-          sum += genome[wOffset + i] * inputs[i];
+  ): NetworkActivations {
+    const evaluated = this.evaluate(genome, inputs);
+
+    const hiddenNodes = genome.nodes
+      .filter((node) => node.type === "hidden")
+      .sort((left, right) => {
+        if (left.layer !== right.layer) {
+          return left.layer - right.layer;
         }
-        firstHidden[h] = Math.tanh(sum);
-      }
+        return left.id - right.id;
+      });
 
-      let hhOffset = OFFSET_HH;
-      let biasOffset = OFFSET_H_BIAS + firstLayerSize;
-      for (let layer = 1; layer < HIDDEN_LAYERS; layer++) {
-        const prev = hiddenTarget[layer - 1];
-        const current = hiddenTarget[layer];
-        const prevSize = HIDDEN_LAYER_UNITS[layer - 1];
-        const currentSize = HIDDEN_LAYER_UNITS[layer];
-
-        for (let h = 0; h < currentSize; h++) {
-          let sum = genome[biasOffset + h];
-          const wOffset = hhOffset + h * prevSize;
-          for (let k = 0; k < prevSize; k++) {
-            sum += genome[wOffset + k] * prev[k];
-          }
-          current[h] = Math.tanh(sum);
-        }
-
-        hhOffset += prevSize * currentSize;
-        biasOffset += currentSize;
-      }
+    const hiddenLabelById = new Map<number, string>();
+    for (let i = 0; i < hiddenNodes.length; i++) {
+      hiddenLabelById.set(hiddenNodes[i].id, `H${i + 1}`);
     }
 
-    let bestAction = 0;
-    let bestValue = Number.NEGATIVE_INFINITY;
-    const outputInputs =
-      HIDDEN_LAYERS > 0 ? hiddenTarget[HIDDEN_LAYERS - 1] : inputs;
-    const outputInputSize =
-      HIDDEN_LAYERS > 0 ? HIDDEN_LAYER_UNITS[HIDDEN_LAYERS - 1] : INPUTS;
+    const activationNodes: NetworkActivationNode[] = genome.nodes.map(
+      (node) => ({
+        id: node.id,
+        type: node.type,
+        layer: node.layer,
+        bias: node.bias,
+        ioIndex: node.ioIndex,
+        label: this.nodeLabel(node, hiddenLabelById),
+        value: evaluated.valuesByNodeId.get(node.id) ?? 0,
+      }),
+    );
 
-    for (let output = 0; output < OUTPUTS; output++) {
-      let value = genome[OFFSET_O_BIAS + output];
-      const wOffset = OFFSET_HO + output * outputInputSize;
-      for (let h = 0; h < outputInputSize; h++) {
-        value += genome[wOffset + h] * outputInputs[h];
-      }
-
-      if (outputTarget) {
-        outputTarget[output] = value;
-      }
-
-      if (value > bestValue) {
-        bestValue = value;
-        bestAction = output;
-      }
+    const labelByNodeId = new Map<number, string>();
+    for (const node of activationNodes) {
+      labelByNodeId.set(node.id, node.label);
     }
 
-    return bestAction;
+    const activationEdges: NetworkActivationEdge[] = [];
+    for (const connection of genome.connections) {
+      if (!connection.enabled) {
+        continue;
+      }
+
+      const fromLabel =
+        labelByNodeId.get(connection.from) ?? `N${connection.from}`;
+      const toLabel = labelByNodeId.get(connection.to) ?? `N${connection.to}`;
+      activationEdges.push({
+        from: connection.from,
+        to: connection.to,
+        weight: connection.weight,
+        enabled: connection.enabled,
+        label: `${fromLabel} -> ${toLabel}`,
+      });
+    }
+
+    return {
+      nodes: activationNodes,
+      edges: activationEdges,
+      output: evaluated.output,
+      best: evaluated.best,
+    };
   }
-}
 
-export function createNetworkHiddenBuffers(): Float32Array[] {
-  return createHiddenLayerBuffers();
+  private evaluate(genome: Genome, inputs: Float32Array): EvaluationResult {
+    const inputNodes = genome.nodes
+      .filter((node) => node.type === "input")
+      .sort((left, right) => (left.ioIndex ?? 0) - (right.ioIndex ?? 0));
+
+    const outputNodes = genome.nodes
+      .filter((node) => node.type === "output")
+      .sort((left, right) => (left.ioIndex ?? 0) - (right.ioIndex ?? 0));
+
+    const hiddenAndOutput = genome.nodes
+      .filter((node) => node.type !== "input")
+      .sort((left, right) => {
+        if (left.layer !== right.layer) {
+          return left.layer - right.layer;
+        }
+        return left.id - right.id;
+      });
+
+    const incomingByTarget = new Map<number, ConnectionGene[]>();
+    for (const connection of genome.connections) {
+      if (!connection.enabled) {
+        continue;
+      }
+
+      const incoming = incomingByTarget.get(connection.to);
+      if (incoming) {
+        incoming.push(connection);
+      } else {
+        incomingByTarget.set(connection.to, [connection]);
+      }
+    }
+
+    const valuesByNodeId = new Map<number, number>();
+    for (let i = 0; i < inputNodes.length; i++) {
+      const node = inputNodes[i];
+      const inputIndex = node.ioIndex ?? i;
+      const inputValue = inputIndex < inputs.length ? inputs[inputIndex] : 0;
+      valuesByNodeId.set(node.id, inputValue);
+    }
+
+    for (const node of hiddenAndOutput) {
+      let sum = node.type === "input" ? 0 : node.bias;
+      const incoming = incomingByTarget.get(node.id);
+      if (incoming) {
+        for (const connection of incoming) {
+          const sourceValue = valuesByNodeId.get(connection.from) ?? 0;
+          sum += sourceValue * connection.weight;
+        }
+      }
+
+      valuesByNodeId.set(
+        node.id,
+        node.type === "output" ? sum : Math.tanh(sum),
+      );
+    }
+
+    const output = new Float32Array(OUTPUTS);
+    for (let i = 0; i < outputNodes.length; i++) {
+      const outputNode = outputNodes[i];
+      const outputIndex = outputNode.ioIndex ?? i;
+      if (outputIndex >= 0 && outputIndex < OUTPUTS) {
+        output[outputIndex] = valuesByNodeId.get(outputNode.id) ?? 0;
+      }
+    }
+
+    let best = 0;
+    let bestValue = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < OUTPUTS; i++) {
+      if (output[i] > bestValue) {
+        bestValue = output[i];
+        best = i;
+      }
+    }
+
+    return {
+      output,
+      best,
+      valuesByNodeId,
+    };
+  }
+
+  private nodeLabel(
+    node: NodeGene,
+    hiddenLabelById: Map<number, string>,
+  ): string {
+    if (node.type === "input") {
+      const inputIndex = node.ioIndex ?? 0;
+      return INPUT_LABELS[inputIndex] ?? `Input ${inputIndex + 1}`;
+    }
+
+    if (node.type === "output") {
+      const outputIndex = node.ioIndex ?? 0;
+      return OUTPUT_LABELS[outputIndex] ?? `Output ${outputIndex + 1}`;
+    }
+
+    return hiddenLabelById.get(node.id) ?? `H${node.id}`;
+  }
 }

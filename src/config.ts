@@ -16,10 +16,20 @@ export const CHART_WIDTH = 300;
 export const CHART_HEIGHT = 140;
 
 export const POP_SIZE = 180;
-export const ELITE_COUNT = 8;
 export const TOURNAMENT_SIZE = 4;
-export const MUTATION_RATE = 0.08;
-export const MUTATION_SIZE = 0.35;
+export const NEAT_COMPATIBILITY_THRESHOLD = 2.2;
+export const NEAT_COMPATIBILITY_GENE_COEFF = 1.0;
+export const NEAT_COMPATIBILITY_WEIGHT_COEFF = 0.4;
+export const NEAT_WEIGHT_MUTATION_RATE = 0.9;
+export const NEAT_WEIGHT_MUTATION_SIZE = 0.35;
+export const NEAT_BIAS_MUTATION_RATE = 0.3;
+export const NEAT_ADD_CONNECTION_RATE = 0.08;
+export const NEAT_ADD_NODE_RATE = 0.02;
+export const NEAT_DISABLE_INHERITED_GENE_RATE = 0.9;
+export const NEAT_SURVIVAL_RATIO = 0.25;
+export const NEAT_MAX_NODES = 24;
+export const NEAT_COMPLEXITY_NODE_PENALTY = 0.12;
+export const NEAT_COMPLEXITY_CONNECTION_PENALTY = 0.008;
 export let BASE_HUNGER = 0;
 
 export const NORMAL_STEPS_PER_SECOND = 30;
@@ -27,24 +37,6 @@ export const TURBO_TIME_BUDGET_MS = 12;
 
 export const INPUTS = 10;
 export const OUTPUTS = 3;
-export const BASE_HIDDEN_UNITS = Math.max(
-  2,
-  Math.round((2 * INPUTS) / 3 + OUTPUTS),
-);
-export const HIDDEN_LAYERS = 1;
-export let HIDDEN_LAYER_UNITS: number[] = [];
-export let IH_COUNT = 0;
-export let HH_COUNT = 0;
-export let H_BIAS_COUNT = 0;
-export let HO_COUNT = 0;
-export let O_BIAS_COUNT = 0;
-
-export let OFFSET_IH = 0;
-export let OFFSET_HH = 0;
-export let OFFSET_H_BIAS = 0;
-export let OFFSET_HO = 0;
-export let OFFSET_O_BIAS = 0;
-export let GENE_COUNT = 0;
 
 function recalculateGridConfig(): void {
   BOARD_SIZE = GRID_SIZE * TILE_SIZE;
@@ -52,44 +44,7 @@ function recalculateGridConfig(): void {
   BASE_HUNGER = GRID_SIZE * GRID_SIZE;
 }
 
-function buildHiddenLayerUnits(layerCount: number): number[] {
-  const units: number[] = [];
-  let width = BASE_HIDDEN_UNITS;
-
-  for (let layer = 0; layer < layerCount; layer++) {
-    units.push(width);
-    width = Math.max(2, Math.round((2 * width) / 3));
-  }
-
-  return units;
-}
-
-function recalculateTopology(): void {
-  HIDDEN_LAYER_UNITS = buildHiddenLayerUnits(HIDDEN_LAYERS);
-
-  IH_COUNT = HIDDEN_LAYER_UNITS.length > 0 ? INPUTS * HIDDEN_LAYER_UNITS[0] : 0;
-  HH_COUNT = 0;
-  for (let layer = 1; layer < HIDDEN_LAYER_UNITS.length; layer++) {
-    HH_COUNT += HIDDEN_LAYER_UNITS[layer - 1] * HIDDEN_LAYER_UNITS[layer];
-  }
-  H_BIAS_COUNT = HIDDEN_LAYER_UNITS.reduce((sum, units) => sum + units, 0);
-  const outputInputs =
-    HIDDEN_LAYER_UNITS.length > 0
-      ? HIDDEN_LAYER_UNITS[HIDDEN_LAYER_UNITS.length - 1]
-      : INPUTS;
-  HO_COUNT = outputInputs * OUTPUTS;
-  O_BIAS_COUNT = OUTPUTS;
-
-  OFFSET_IH = 0;
-  OFFSET_HH = OFFSET_IH + IH_COUNT;
-  OFFSET_H_BIAS = OFFSET_HH + HH_COUNT;
-  OFFSET_HO = OFFSET_H_BIAS + H_BIAS_COUNT;
-  OFFSET_O_BIAS = OFFSET_HO + HO_COUNT;
-  GENE_COUNT = OFFSET_O_BIAS + O_BIAS_COUNT;
-}
-
 recalculateGridConfig();
-recalculateTopology();
 
 export function setGridSize(nextSize: number): number {
   const clamped = Math.min(MAX_GRID_SIZE, Math.max(MIN_GRID_SIZE, nextSize));

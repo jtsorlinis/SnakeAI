@@ -3,21 +3,12 @@ import {
   CHART_HEIGHT,
   CHART_WIDTH,
   GRID_SIZE,
-  HIDDEN_LAYER_UNITS,
-  INPUTS,
-  INPUT_LABELS,
   NET_HEIGHT,
   NET_HOVER_RADIUS,
   NET_WIDTH,
-  OFFSET_HH,
-  OFFSET_HO,
-  OFFSET_IH,
-  OFFSET_O_BIAS,
-  OUTPUTS,
-  OUTPUT_LABELS,
   TILE_SIZE,
 } from "./config";
-import type { Point, TrainerState } from "./types";
+import type { NetworkActivationNode, Point, TrainerState } from "./types";
 
 type RendererElements = {
   netCanvas: HTMLCanvasElement;
@@ -139,130 +130,111 @@ export class SnakeRenderer {
   }
 
   private drawNetwork(state: TrainerState): void {
-    const { genome, activations } = state.network;
+    const { activations } = state.network;
 
     this.netCtx.fillStyle = "#000";
     this.netCtx.fillRect(0, 0, NET_WIDTH, NET_HEIGHT);
 
-    if (!genome || !activations) {
+    if (!activations) {
       return;
     }
 
-    let outputAbsMax = 0.001;
-    for (let o = 0; o < OUTPUTS; o++) {
-      outputAbsMax = Math.max(outputAbsMax, Math.abs(activations.output[o]));
-    }
-
-    const hiddenLayerCount = HIDDEN_LAYER_UNITS.length;
     const top = 24;
     const bottom = NET_HEIGHT - 24;
     const inputX = 84;
     const outputX = NET_WIDTH - 84;
 
-    const inputY: number[] = [];
-    const hiddenX: number[] = [];
-    const hiddenY: number[][] = [];
-    const outputY: number[] = [];
+    const inputNodes = activations.nodes
+      .filter((node) => node.type === "input")
+      .sort((left, right) => {
+        const leftIndex = left.ioIndex ?? Number.MAX_SAFE_INTEGER;
+        const rightIndex = right.ioIndex ?? Number.MAX_SAFE_INTEGER;
+        if (leftIndex !== rightIndex) {
+          return leftIndex - rightIndex;
+        }
+        return left.id - right.id;
+      });
 
-    for (let i = 0; i < INPUTS; i++) {
-      inputY.push(top + (i * (bottom - top)) / Math.max(1, INPUTS - 1));
+    const hiddenNodes = activations.nodes
+      .filter((node) => node.type === "hidden")
+      .sort((left, right) => {
+        if (left.layer !== right.layer) {
+          return left.layer - right.layer;
+        }
+        return left.id - right.id;
+      });
+
+    const outputNodes = activations.nodes
+      .filter((node) => node.type === "output")
+      .sort((left, right) => {
+        const leftIndex = left.ioIndex ?? Number.MAX_SAFE_INTEGER;
+        const rightIndex = right.ioIndex ?? Number.MAX_SAFE_INTEGER;
+        if (leftIndex !== rightIndex) {
+          return leftIndex - rightIndex;
+        }
+        return left.id - right.id;
+      });
+
+    const hiddenLayerValues = [
+      ...new Set(hiddenNodes.map((node) => node.layer)),
+    ].sort((left, right) => left - right);
+
+    const hiddenLayers = hiddenLayerValues.map((layerValue) =>
+      hiddenNodes.filter((node) => node.layer === layerValue),
+    );
+
+    const nodePositions = new Map<number, Point>();
+    const inputY = new Map<number, number>();
+    const hiddenLayout: Array<{ x: number; nodes: NetworkActivationNode[] }> =
+      [];
+    const outputY = new Map<number, number>();
+
+    for (let i = 0; i < inputNodes.length; i++) {
+      const y = top + (i * (bottom - top)) / Math.max(1, inputNodes.length - 1);
+      nodePositions.set(inputNodes[i].id, { x: inputX, y });
+      inputY.set(inputNodes[i].id, y);
     }
 
-    for (let layer = 0; layer < hiddenLayerCount; layer++) {
-      hiddenX.push(
-        inputX + ((layer + 1) * (outputX - inputX)) / (hiddenLayerCount + 1),
-      );
-    }
+    for (let layer = 0; layer < hiddenLayers.length; layer++) {
+      const x =
+        inputX + ((layer + 1) * (outputX - inputX)) / (hiddenLayers.length + 1);
+      const nodes = hiddenLayers[layer];
+      hiddenLayout.push({ x, nodes });
 
-    for (let layer = 0; layer < hiddenLayerCount; layer++) {
-      const units = HIDDEN_LAYER_UNITS[layer];
-      const positions: number[] = [];
-      for (let h = 0; h < units; h++) {
-        positions.push(top + (h * (bottom - top)) / Math.max(1, units - 1));
+      for (let i = 0; i < nodes.length; i++) {
+        const y = top + ((i + 1) * (bottom - top)) / (nodes.length + 1);
+        nodePositions.set(nodes[i].id, { x, y });
       }
-      hiddenY.push(positions);
     }
 
-    for (let o = 0; o < OUTPUTS; o++) {
-      outputY.push(top + (o * (bottom - top)) / Math.max(1, OUTPUTS - 1));
+    for (let i = 0; i < outputNodes.length; i++) {
+      const y =
+        top + (i * (bottom - top)) / Math.max(1, outputNodes.length - 1);
+      nodePositions.set(outputNodes[i].id, { x: outputX, y });
+      outputY.set(outputNodes[i].id, y);
     }
 
     const edges: NetEdge[] = [];
-
-    if (hiddenLayerCount > 0) {
-      const firstHiddenX = hiddenX[0];
-      const firstHiddenY = hiddenY[0];
-      const firstSize = HIDDEN_LAYER_UNITS[0];
-      for (let h = 0; h < firstSize; h++) {
-        const wOffset = OFFSET_IH + h * INPUTS;
-        for (let i = 0; i < INPUTS; i++) {
-          edges.push({
-            x1: inputX,
-            y1: inputY[i],
-            x2: firstHiddenX,
-            y2: firstHiddenY[h],
-            weight: genome[wOffset + i],
-            label: `${INPUT_LABELS[i]} -> H1:${h + 1}`,
-          });
-        }
+    for (const edge of activations.edges) {
+      const from = nodePositions.get(edge.from);
+      const to = nodePositions.get(edge.to);
+      if (!from || !to) {
+        continue;
       }
 
-      let hhOffset = OFFSET_HH;
-      for (let layer = 1; layer < hiddenLayerCount; layer++) {
-        const prevSize = HIDDEN_LAYER_UNITS[layer - 1];
-        const currSize = HIDDEN_LAYER_UNITS[layer];
-        const fromX = hiddenX[layer - 1];
-        const toX = hiddenX[layer];
-        const fromY = hiddenY[layer - 1];
-        const toY = hiddenY[layer];
+      edges.push({
+        x1: from.x,
+        y1: from.y,
+        x2: to.x,
+        y2: to.y,
+        weight: edge.weight,
+        label: edge.label,
+      });
+    }
 
-        for (let to = 0; to < currSize; to++) {
-          const wOffset = hhOffset + to * prevSize;
-          for (let from = 0; from < prevSize; from++) {
-            edges.push({
-              x1: fromX,
-              y1: fromY[from],
-              x2: toX,
-              y2: toY[to],
-              weight: genome[wOffset + from],
-              label: `H${layer}:${from + 1} -> H${layer + 1}:${to + 1}`,
-            });
-          }
-        }
-
-        hhOffset += prevSize * currSize;
-      }
-
-      const lastHiddenX = hiddenX[hiddenLayerCount - 1];
-      const lastHiddenY = hiddenY[hiddenLayerCount - 1];
-      const lastSize = HIDDEN_LAYER_UNITS[hiddenLayerCount - 1];
-      for (let o = 0; o < OUTPUTS; o++) {
-        const wOffset = OFFSET_HO + o * lastSize;
-        for (let h = 0; h < lastSize; h++) {
-          edges.push({
-            x1: lastHiddenX,
-            y1: lastHiddenY[h],
-            x2: outputX,
-            y2: outputY[o],
-            weight: genome[wOffset + h],
-            label: `H${hiddenLayerCount}:${h + 1} -> ${OUTPUT_LABELS[o]}`,
-          });
-        }
-      }
-    } else {
-      for (let o = 0; o < OUTPUTS; o++) {
-        const wOffset = OFFSET_HO + o * INPUTS;
-        for (let i = 0; i < INPUTS; i++) {
-          edges.push({
-            x1: inputX,
-            y1: inputY[i],
-            x2: outputX,
-            y2: outputY[o],
-            weight: genome[wOffset + i],
-            label: `${INPUT_LABELS[i]} -> ${OUTPUT_LABELS[o]}`,
-          });
-        }
-      }
+    let outputAbsMax = 0.001;
+    for (let i = 0; i < activations.output.length; i++) {
+      outputAbsMax = Math.max(outputAbsMax, Math.abs(activations.output[i]));
     }
 
     let maxAbs = 0.001;
@@ -317,16 +289,21 @@ export class SnakeRenderer {
     this.netCtx.fillStyle = "rgba(255, 255, 255, 0.9)";
     this.netCtx.font = "12px JetBrains Mono, monospace";
     this.netCtx.fillText("Input", inputX - 28, 14);
-    for (let layer = 0; layer < hiddenLayerCount; layer++) {
-      this.netCtx.fillText(`H${layer + 1}`, hiddenX[layer] - 10, 14);
+    for (let layer = 0; layer < hiddenLayout.length; layer++) {
+      this.netCtx.fillText(`H${layer + 1}`, hiddenLayout[layer].x - 10, 14);
     }
-    if (hiddenLayerCount === 0) {
+    if (hiddenLayout.length === 0) {
       this.netCtx.fillText("Direct", NET_WIDTH / 2 - 20, 14);
     }
     this.netCtx.fillText("Output", outputX - 24, 14);
 
-    for (let i = 0; i < INPUTS; i++) {
-      const value = activations.input[i];
+    for (const node of inputNodes) {
+      const y = inputY.get(node.id);
+      if (y === undefined) {
+        continue;
+      }
+
+      const value = node.value;
       const intensity = Math.min(1, Math.abs(value));
 
       if (intensity > 0.02) {
@@ -335,25 +312,28 @@ export class SnakeRenderer {
             ? `rgba(41, 182, 246, ${0.1 + intensity * 0.55})`
             : `rgba(255, 183, 77, ${0.1 + intensity * 0.55})`;
         this.netCtx.beginPath();
-        this.netCtx.arc(inputX, inputY[i], 7 + intensity * 4, 0, Math.PI * 2);
+        this.netCtx.arc(inputX, y, 7 + intensity * 4, 0, Math.PI * 2);
         this.netCtx.fill();
       }
 
       this.netCtx.fillStyle = value >= 0 ? "#29b6f6" : "#ffb74d";
       this.netCtx.beginPath();
-      this.netCtx.arc(inputX, inputY[i], 5, 0, Math.PI * 2);
+      this.netCtx.arc(inputX, y, 5, 0, Math.PI * 2);
       this.netCtx.fill();
 
       this.netCtx.fillStyle = "rgba(255, 255, 255, 0.88)";
       this.netCtx.font = "10px JetBrains Mono, monospace";
-      this.netCtx.fillText(INPUT_LABELS[i], 6, inputY[i] + 3);
+      this.netCtx.fillText(node.label, 6, y + 3);
     }
 
-    for (let layer = 0; layer < hiddenLayerCount; layer++) {
-      const layerActivation = activations.hidden[layer];
-      const layerY = hiddenY[layer];
-      for (let h = 0; h < layerY.length; h++) {
-        const value = layerActivation[h];
+    for (const layer of hiddenLayout) {
+      for (const node of layer.nodes) {
+        const point = nodePositions.get(node.id);
+        if (!point) {
+          continue;
+        }
+
+        const value = node.value;
         const intensity = Math.min(1, Math.abs(value));
 
         if (intensity > 0.02) {
@@ -362,25 +342,28 @@ export class SnakeRenderer {
               ? `rgba(76, 175, 80, ${0.1 + intensity * 0.6})`
               : `rgba(244, 67, 54, ${0.1 + intensity * 0.6})`;
           this.netCtx.beginPath();
-          this.netCtx.arc(
-            hiddenX[layer],
-            layerY[h],
-            7 + intensity * 4,
-            0,
-            Math.PI * 2,
-          );
+          this.netCtx.arc(point.x, point.y, 7 + intensity * 4, 0, Math.PI * 2);
           this.netCtx.fill();
         }
 
         this.netCtx.fillStyle = value >= 0 ? "#26a69a" : "#ef5350";
         this.netCtx.beginPath();
-        this.netCtx.arc(hiddenX[layer], layerY[h], 5, 0, Math.PI * 2);
+        this.netCtx.arc(point.x, point.y, 5, 0, Math.PI * 2);
         this.netCtx.fill();
       }
     }
 
-    for (let o = 0; o < OUTPUTS; o++) {
-      const value = activations.output[o];
+    for (const node of outputNodes) {
+      const y = outputY.get(node.id);
+      if (y === undefined) {
+        continue;
+      }
+
+      const outputIndex = node.ioIndex ?? -1;
+      const value =
+        outputIndex >= 0 && outputIndex < activations.output.length
+          ? activations.output[outputIndex]
+          : node.value;
       const intensity = Math.min(1, Math.abs(value) / outputAbsMax);
 
       if (intensity > 0.02) {
@@ -389,34 +372,31 @@ export class SnakeRenderer {
             ? `rgba(76, 175, 80, ${0.12 + intensity * 0.6})`
             : `rgba(244, 67, 54, ${0.12 + intensity * 0.6})`;
         this.netCtx.beginPath();
-        this.netCtx.arc(outputX, outputY[o], 8 + intensity * 5, 0, Math.PI * 2);
+        this.netCtx.arc(outputX, y, 8 + intensity * 5, 0, Math.PI * 2);
         this.netCtx.fill();
       }
 
-      this.netCtx.fillStyle = o === activations.best ? "#ffd54f" : "#ffb74d";
+      const isBest = outputIndex === activations.best;
+      this.netCtx.fillStyle = isBest ? "#ffd54f" : "#ffb74d";
       this.netCtx.beginPath();
-      this.netCtx.arc(outputX, outputY[o], 6, 0, Math.PI * 2);
+      this.netCtx.arc(outputX, y, 6, 0, Math.PI * 2);
       this.netCtx.fill();
 
-      if (o === activations.best) {
+      if (isBest) {
         this.netCtx.strokeStyle = "rgba(255, 255, 255, 0.9)";
         this.netCtx.lineWidth = 1.5;
         this.netCtx.beginPath();
-        this.netCtx.arc(outputX, outputY[o], 9, 0, Math.PI * 2);
+        this.netCtx.arc(outputX, y, 9, 0, Math.PI * 2);
         this.netCtx.stroke();
       }
 
       this.netCtx.fillStyle = "rgba(255, 255, 255, 0.9)";
       this.netCtx.font = "11px JetBrains Mono, monospace";
-      this.netCtx.fillText(OUTPUT_LABELS[o], outputX + 12, outputY[o] + 3);
+      this.netCtx.fillText(node.label, outputX + 12, y + 3);
       this.netCtx.fillStyle = "rgba(255, 255, 255, 0.65)";
       this.netCtx.font = "9px JetBrains Mono, monospace";
-      this.netCtx.fillText(
-        `b=${genome[OFFSET_O_BIAS + o].toFixed(2)}`,
-        outputX + 12,
-        outputY[o] + 14,
-      );
-      this.netCtx.fillText(`a=${value.toFixed(2)}`, outputX + 12, outputY[o] + 24);
+      this.netCtx.fillText(`b=${node.bias.toFixed(2)}`, outputX + 12, y + 14);
+      this.netCtx.fillText(`a=${value.toFixed(2)}`, outputX + 12, y + 24);
     }
 
     if (hoveredEdge && this.netMouse) {
@@ -518,7 +498,8 @@ export class SnakeRenderer {
 
     for (let i = 0; i < history.length; i++) {
       const x = 10 + (i / (history.length - 1)) * (CHART_WIDTH - 20);
-      const y = CHART_HEIGHT - 10 - (history[i] / maxScore) * (CHART_HEIGHT - 20);
+      const y =
+        CHART_HEIGHT - 10 - (history[i] / maxScore) * (CHART_HEIGHT - 20);
 
       if (i === 0) {
         this.chartCtx.moveTo(x, y);

@@ -1,12 +1,11 @@
-import { BASE_HUNGER, DIRS, GRID_SIZE, INPUTS, MAX_SCORE, OUTPUTS } from "./config";
-import { NeuralNetwork, createNetworkHiddenBuffers } from "./NeuralNetwork";
+import { BASE_HUNGER, DIRS, GRID_SIZE, INPUTS, MAX_SCORE } from "./config";
+import { cloneGenome } from "./Neat";
+import { NeuralNetwork } from "./NeuralNetwork";
 import type { Agent, Genome, NetworkActivations, Point } from "./types";
 
 export class SnakeEnvironment {
   private readonly actionInputs = new Float32Array(INPUTS);
   private readonly vizInputs = new Float32Array(INPUTS);
-  private readonly vizHidden = createNetworkHiddenBuffers();
-  private readonly vizOutputs = new Float32Array(OUTPUTS);
 
   constructor(private readonly network: NeuralNetwork) {}
 
@@ -20,7 +19,7 @@ export class SnakeEnvironment {
     ];
 
     return {
-      genome: new Float32Array(genome),
+      genome: cloneGenome(genome),
       body,
       dir: 1,
       food: this.randomFood(body),
@@ -29,6 +28,7 @@ export class SnakeEnvironment {
       steps: 0,
       hunger: BASE_HUNGER,
       fitness: 0,
+      speciesId: 0,
     };
   }
 
@@ -98,19 +98,7 @@ export class SnakeEnvironment {
       this.vizInputs.fill(0);
     }
 
-    const best = this.network.run(
-      genome,
-      this.vizInputs,
-      this.vizHidden,
-      this.vizOutputs,
-    );
-
-    return {
-      input: this.vizInputs,
-      hidden: this.vizHidden,
-      output: this.vizOutputs,
-      best,
-    };
+    return this.network.computeActivations(genome, this.vizInputs);
   }
 
   private randomIndex(maxExclusive: number): number {

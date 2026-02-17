@@ -1,6 +1,27 @@
 export type Point = { x: number; y: number };
 
-export type Genome = Float32Array;
+export type NodeType = "input" | "hidden" | "output";
+
+export type NodeGene = {
+  id: number;
+  type: NodeType;
+  layer: number;
+  bias: number;
+  ioIndex?: number;
+};
+
+export type ConnectionGene = {
+  innovation: number;
+  from: number;
+  to: number;
+  weight: number;
+  enabled: boolean;
+};
+
+export type Genome = {
+  nodes: NodeGene[];
+  connections: ConnectionGene[];
+};
 
 export type Agent = {
   genome: Genome;
@@ -12,11 +33,30 @@ export type Agent = {
   steps: number;
   hunger: number;
   fitness: number;
+  speciesId: number;
+};
+
+export type NetworkActivationNode = {
+  id: number;
+  type: NodeType;
+  layer: number;
+  bias: number;
+  ioIndex?: number;
+  label: string;
+  value: number;
+};
+
+export type NetworkActivationEdge = {
+  from: number;
+  to: number;
+  weight: number;
+  enabled: boolean;
+  label: string;
 };
 
 export type NetworkActivations = {
-  input: Float32Array;
-  hidden: Float32Array[];
+  nodes: NetworkActivationNode[];
+  edges: NetworkActivationEdge[];
   output: Float32Array;
   best: number;
 };
