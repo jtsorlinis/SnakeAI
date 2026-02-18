@@ -1,4 +1,11 @@
-import { BASE_HUNGER, DIRS, GRID_SIZE, INPUTS, MAX_SCORE, OUTPUTS } from "./config";
+import {
+  BASE_HUNGER,
+  DIRS,
+  GRID_SIZE,
+  INPUTS,
+  MAX_SCORE,
+  OUTPUTS,
+} from "./config";
 import { NeuralNetwork, createNetworkHiddenBuffers } from "./NeuralNetwork";
 import type { Agent, Genome, NetworkActivations, Point } from "./types";
 
@@ -191,6 +198,13 @@ export class SnakeEnvironment {
     return GRID_SIZE + 1;
   }
 
+  private checkForFood(head: Point, direction: Point, food: Point): number {
+    const foodDeltaX = food.x - head.x;
+    const foodDeltaY = food.y - head.y;
+    const dot = foodDeltaX * direction.x + foodDeltaY * direction.y;
+    return dot > 0 ? 1 : -1;
+  }
+
   private senseInto(agent: Agent, target: Float32Array): void {
     const head = agent.body[0];
     const front = DIRS[agent.dir];
@@ -203,9 +217,8 @@ export class SnakeEnvironment {
     target[3] = 1 / this.findTailDistance(head, front, agent.body);
     target[4] = 1 / this.findTailDistance(head, left, agent.body);
     target[5] = 1 / this.findTailDistance(head, right, agent.body);
-
-    target[6] = agent.food.x > head.x ? 1 : 0;
-    target[7] = agent.food.y > head.y ? 1 : 0;
+    target[6] = this.checkForFood(head, front, agent.food);
+    target[7] = this.checkForFood(head, left, agent.food);
     target[8] = front.x;
     target[9] = front.y;
   }
