@@ -226,6 +226,11 @@ export class ConvDQN {
     });
   }
 
+  public dispose(): void {
+    this.model.dispose();
+    this.optimizer.dispose();
+  }
+
   private writeObservationToNhwc(
     input: ArrayLike<number>,
     target: Float32Array,

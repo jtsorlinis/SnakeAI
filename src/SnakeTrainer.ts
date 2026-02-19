@@ -45,12 +45,15 @@ export class SnakeTrainer {
   private loss = 0;
   private bestReturn = Number.NEGATIVE_INFINITY;
   private lastTargetSyncStep = 0;
+  private stepsPerSecond = 0;
 
   constructor() {
     this.reset();
   }
 
   public reset(): void {
+    this.online.dispose();
+    this.target.dispose();
     this.online = new ConvDQN();
     this.target = new ConvDQN();
     this.target.copyWeightsFrom(this.online);
@@ -82,6 +85,7 @@ export class SnakeTrainer {
     this.loss = 0;
     this.bestReturn = Number.NEGATIVE_INFINITY;
     this.lastTargetSyncStep = 0;
+    this.stepsPerSecond = 0;
   }
 
   public simulate(stepCount: number): void {
@@ -103,6 +107,7 @@ export class SnakeTrainer {
       totalSteps: this.totalSteps,
       epsilon: this.epsilon,
       replaySize: this.replay.size,
+      stepsPerSecond: this.stepsPerSecond,
       avgReturn,
       bestReturn:
         this.bestReturn === Number.NEGATIVE_INFINITY ? 0 : this.bestReturn,
@@ -117,6 +122,10 @@ export class SnakeTrainer {
 
   public onGridSizeChanged(): void {
     this.reset();
+  }
+
+  public setStepsPerSecond(value: number): void {
+    this.stepsPerSecond = value;
   }
 
   private stepTrainingEnvironments(): void {
@@ -151,6 +160,15 @@ export class SnakeTrainer {
         this.trainingStates[i] = nextState;
       }
     }
+  }
+
+  private selectAction(state: Uint8Array, explore: boolean): number {
+    if (explore && Math.random() < this.epsilon) {
+      return Math.floor(Math.random() * OUTPUTS);
+    }
+
+    this.online.predict(state, this.actionQScratch);
+    return argMax(this.actionQScratch);
   }
 
   private trainOnlineNetwork(): void {
@@ -197,15 +215,6 @@ export class SnakeTrainer {
     this.environment.observe(this.showcaseAgent, this.showcaseObservation);
     this.online.predict(this.showcaseObservation, this.showcaseQValues);
     this.showcaseAction = argMax(this.showcaseQValues);
-  }
-
-  private selectAction(state: Uint8Array, explore: boolean): number {
-    if (explore && Math.random() < this.epsilon) {
-      return Math.floor(Math.random() * OUTPUTS);
-    }
-
-    this.online.predict(state, this.actionQScratch);
-    return argMax(this.actionQScratch);
   }
 
   private recordEpisodeReturn(value: number): void {

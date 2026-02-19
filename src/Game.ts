@@ -4,6 +4,7 @@ import {
   MAX_GRID_SIZE,
   MIN_GRID_SIZE,
   NORMAL_STEPS_PER_SECOND,
+  TRAIN_ENVS,
   TURBO_TIME_BUDGET_MS,
   setGridSize,
 } from "./config";
@@ -22,6 +23,9 @@ export class Game {
   private turboMode = false;
   private stepBudget = 0;
   private lastFrameTime = 0;
+  private envStepsPerSecond = 0;
+  private throughputStepAccumulator = 0;
+  private throughputTimeAccumulator = 0;
 
   constructor() {
     const netCanvas = this.getCanvas("netCanvas");
@@ -108,6 +112,10 @@ export class Game {
     }
 
     this.trainer.onGridSizeChanged();
+    this.envStepsPerSecond = 0;
+    this.throughputStepAccumulator = 0;
+    this.throughputTimeAccumulator = 0;
+    this.trainer.setStepsPerSecond(this.envStepsPerSecond);
     this.stepBudget = 0;
     this.lastFrameTime = 0;
   }
@@ -120,6 +128,10 @@ export class Game {
 
   private resetTraining(): void {
     this.trainer.reset();
+    this.envStepsPerSecond = 0;
+    this.throughputStepAccumulator = 0;
+    this.throughputTimeAccumulator = 0;
+    this.trainer.setStepsPerSecond(this.envStepsPerSecond);
     this.stepBudget = 0;
     this.lastFrameTime = 0;
   }
@@ -132,10 +144,13 @@ export class Game {
     const deltaSeconds = Math.max(0, (time - this.lastFrameTime) / 1000);
     this.lastFrameTime = time;
 
+    let simulatedTicks = 0;
+
     if (this.turboMode) {
       const start = performance.now();
       do {
         this.trainer.simulate(1);
+        simulatedTicks += 1;
       } while (performance.now() - start < TURBO_TIME_BUDGET_MS);
     } else {
       this.stepBudget += deltaSeconds * NORMAL_STEPS_PER_SECOND;
@@ -143,8 +158,23 @@ export class Game {
       if (stepCount > 0) {
         this.stepBudget -= stepCount;
         this.trainer.simulate(stepCount);
+        simulatedTicks = stepCount;
       }
     }
+
+    if (simulatedTicks > 0) {
+      this.throughputStepAccumulator += simulatedTicks * TRAIN_ENVS;
+      this.throughputTimeAccumulator += deltaSeconds;
+
+      if (this.throughputTimeAccumulator >= 0.5) {
+        this.envStepsPerSecond =
+          this.throughputStepAccumulator / this.throughputTimeAccumulator;
+        this.throughputStepAccumulator = 0;
+        this.throughputTimeAccumulator = 0;
+      }
+    }
+
+    this.trainer.setStepsPerSecond(this.envStepsPerSecond);
 
     this.renderer.render(this.trainer.getState());
     requestAnimationFrame(this.loop);

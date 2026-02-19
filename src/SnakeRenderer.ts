@@ -287,6 +287,7 @@ export class SnakeRenderer {
     this.stats.innerHTML = [
       `Episodes: <strong>${state.episodeCount}</strong>`,
       `Steps: ${state.totalSteps.toLocaleString()}`,
+      `Env steps/s: ${state.stepsPerSecond.toFixed(0)}`,
       `Grid: ${GRID_SIZE}x${GRID_SIZE}`,
       `Epsilon: ${state.epsilon.toFixed(3)}`,
       `Replay size: ${state.replaySize.toLocaleString()}`,
