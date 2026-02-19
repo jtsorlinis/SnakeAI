@@ -128,7 +128,6 @@ export class NeatAlgorithm {
     const foodReward = agent.score;
     const deathPenalty = !agent.alive && agent.hunger > 0 ? 1 : 0;
     const stepPenalty = agent.steps / (GRID_SIZE * GRID_SIZE);
-
     return foodReward - deathPenalty - stepPenalty;
   }
 
