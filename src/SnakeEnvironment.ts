@@ -183,7 +183,7 @@ export class SnakeEnvironment {
     const foodDeltaX = food.x - head.x;
     const foodDeltaY = food.y - head.y;
     const dot = foodDeltaX * direction.x + foodDeltaY * direction.y;
-    return dot > 0 ? 1 : -1;
+    return Math.sign(dot);
   }
 
   private senseInto(agent: Agent, target: Float32Array): void {
