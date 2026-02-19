@@ -70,8 +70,8 @@ export const INPUT_LABELS = [
   "Tail Ahead",
   "Tail Left",
   "Tail Right",
-  "Food Right",
-  "Food Below",
+  "Food Fwd/Back",
+  "Food Left/Right",
   "Dir X",
   "Dir Y",
 ] as const;

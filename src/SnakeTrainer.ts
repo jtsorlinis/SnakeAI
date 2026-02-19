@@ -5,7 +5,7 @@ import { SnakeEnvironment } from "./SnakeEnvironment";
 import type { Agent, Genome, TrainerState } from "./types";
 
 export class SnakeTrainer {
-  private readonly neat = new NeatAlgorithm();
+  private neat = new NeatAlgorithm();
   private readonly network = new NeuralNetwork();
   private readonly environment = new SnakeEnvironment(this.network);
 
@@ -14,18 +14,35 @@ export class SnakeTrainer {
   private bestEverScore = 0;
   private bestEverFitness = 0;
   private bestFitnessGen = 1;
-  private history: number[] = [];
+  private fitnessHistory: number[] = [];
 
   private showcaseGenome: Genome | null = null;
   private showcaseAgent: Agent | null = null;
 
   constructor() {
+    this.reset();
+  }
+
+  public reset(): void {
+    this.neat = new NeatAlgorithm();
+    this.population = [];
+    this.generation = 1;
+    this.bestEverScore = 0;
+    this.bestEverFitness = 0;
+    this.bestFitnessGen = 1;
+    this.fitnessHistory = [];
+    this.showcaseGenome = null;
+    this.showcaseAgent = null;
+
     for (let i = 0; i < POP_SIZE; i++) {
       this.population.push(
         this.environment.createAgent(this.neat.randomGenome()),
       );
     }
-    this.setShowcaseGenome(this.population[0].genome);
+
+    if (this.population.length > 0) {
+      this.setShowcaseGenome(this.population[0].genome);
+    }
   }
 
   public simulate(stepCount: number): void {
@@ -78,7 +95,7 @@ export class SnakeTrainer {
 
     return {
       boardAgent,
-      history: this.history,
+      fitnessHistory: this.fitnessHistory,
       generation: this.generation,
       alive,
       populationSize: POP_SIZE,
@@ -116,9 +133,9 @@ export class SnakeTrainer {
       this.setShowcaseGenome(best.genome);
     }
 
-    this.history.push(best.score);
-    if (this.history.length > 500) {
-      this.history.shift();
+    this.fitnessHistory.push(best.fitness);
+    if (this.fitnessHistory.length > 500) {
+      this.fitnessHistory.shift();
     }
 
     this.population = nextGenomes.map((genome) =>

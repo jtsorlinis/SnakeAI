@@ -16,6 +16,7 @@ export class Game {
   private readonly turboToggle: HTMLInputElement;
   private readonly gridDownButton: HTMLButtonElement;
   private readonly gridUpButton: HTMLButtonElement;
+  private readonly resetButton: HTMLButtonElement;
   private readonly gridValue: HTMLElement;
 
   private turboMode = false;
@@ -31,6 +32,7 @@ export class Game {
     const networkToggle = this.getInput("networkToggle");
     this.gridDownButton = this.getButton("gridDown");
     this.gridUpButton = this.getButton("gridUp");
+    this.resetButton = this.getButton("resetTraining");
     this.gridValue = this.getElement("gridValue");
 
     this.renderer = new SnakeRenderer({
@@ -56,6 +58,9 @@ export class Game {
     });
     this.gridUpButton.addEventListener("click", () => {
       this.updateGridSize(GRID_SIZE_STEP);
+    });
+    this.resetButton.addEventListener("click", () => {
+      this.resetTraining();
     });
     this.refreshGridControls();
 
@@ -111,6 +116,12 @@ export class Game {
     this.gridValue.textContent = `${GRID_SIZE}x${GRID_SIZE}`;
     this.gridDownButton.disabled = GRID_SIZE <= MIN_GRID_SIZE;
     this.gridUpButton.disabled = GRID_SIZE >= MAX_GRID_SIZE;
+  }
+
+  private resetTraining(): void {
+    this.trainer.reset();
+    this.stepBudget = 0;
+    this.lastFrameTime = 0;
   }
 
   private loop = (time: number): void => {
