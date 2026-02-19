@@ -145,11 +145,12 @@ export class SnakeEnvironment {
     const head = agent.body[0];
     obs[this.obsIndex(CHANNEL_HEAD, head.x, head.y)] = 1;
 
-    const denominator = Math.max(1, agent.body.length - 1);
-    for (let i = 1; i < agent.body.length; i++) {
+    const maxClearTime = GRID_SIZE * GRID_SIZE;
+    for (let i = 0; i < agent.body.length; i++) {
       const part = agent.body[i];
-      const k = agent.body.length - 1 - i;
-      obs[this.obsIndex(CHANNEL_BODY_AGE, part.x, part.y)] = k / denominator;
+      const stepsUntilClear = agent.body.length - i;
+      obs[this.obsIndex(CHANNEL_BODY_AGE, part.x, part.y)] =
+        stepsUntilClear / maxClearTime;
     }
 
     const direction = DIRS[agent.dir];
