@@ -4,7 +4,6 @@ import {
   MAX_GRID_SIZE,
   MIN_GRID_SIZE,
   NORMAL_STEPS_PER_SECOND,
-  TRAIN_ENVS,
   TURBO_TIME_BUDGET_MS,
   setGridSize,
 } from "./config";
@@ -179,7 +178,7 @@ export class Game {
     const deltaSeconds = Math.max(0, (time - this.lastFrameTime) / 1000);
     this.lastFrameTime = time;
 
-    let simulatedTicks = 0;
+    let simulatedEnvSteps = 0;
     if (this.paused) {
       this.stepBudget += deltaSeconds * NORMAL_STEPS_PER_SECOND;
       const showcaseSteps = Math.floor(this.stepBudget);
@@ -190,13 +189,12 @@ export class Game {
     } else {
       const start = performance.now();
       do {
-        this.trainer.simulate(1);
-        simulatedTicks += 1;
+        simulatedEnvSteps += this.trainer.simulate(1);
       } while (performance.now() - start < TURBO_TIME_BUDGET_MS);
     }
 
-    if (simulatedTicks > 0) {
-      this.throughputStepAccumulator += simulatedTicks * TRAIN_ENVS;
+    if (!this.paused) {
+      this.throughputStepAccumulator += simulatedEnvSteps;
       this.throughputTimeAccumulator += deltaSeconds;
 
       if (this.throughputTimeAccumulator >= 0.5) {
@@ -205,7 +203,7 @@ export class Game {
         this.throughputStepAccumulator = 0;
         this.throughputTimeAccumulator = 0;
       }
-    } else if (this.paused && this.envStepsPerSecond !== 0) {
+    } else if (this.envStepsPerSecond !== 0) {
       this.envStepsPerSecond = 0;
     }
 

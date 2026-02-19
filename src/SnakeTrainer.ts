@@ -1,62 +1,94 @@
 import {
-  BATCH_SIZE,
-  EPSILON_DECAY_STEPS,
-  EPSILON_END,
-  EPSILON_START,
+  GAE_LAMBDA,
   GAMMA,
-  GRADIENT_STEPS,
-  N_STEP_RETURNS,
   OUTPUTS,
-  PRIORITY_BETA_DECAY_STEPS,
-  PRIORITY_BETA_END,
-  PRIORITY_BETA_START,
-  REPLAY_CAPACITY,
-  TARGET_UPDATE_STEPS,
+  PPO_CLIP_RANGE,
+  PPO_ENTROPY_COEF,
+  PPO_EPOCHS,
+  PPO_MINIBATCH_SIZE,
+  PPO_ROLLOUT_STEPS,
+  PPO_TARGET_KL,
+  PPO_VALUE_LOSS_COEF,
   TRAIN_ENVS,
-  TRAIN_EVERY_STEPS,
-  TRAIN_START_SIZE,
   observationSize,
 } from "./config";
 import { argMax, ConvDQN } from "./ConvDQN";
-import { ReplayBuffer } from "./ReplayBuffer";
 import { SnakeEnvironment } from "./SnakeEnvironment";
-import type { Agent, TrainerState, Transition } from "./types";
+import type { Agent, TrainerState } from "./types";
 
 const HISTORY_LIMIT = 1000;
 const AVG_WINDOW = 100;
+const METRIC_EMA = 0.1;
+const PPO_MINIBATCHES_PER_SIM_TICK = 1;
 
-type NStepEntry = Transition;
+type PendingPpoUpdate = {
+  batchSize: number;
+  indices: Int32Array;
+  epoch: number;
+  cursor: number;
+  accumTotalLoss: number;
+  accumPolicyLoss: number;
+  accumValueLoss: number;
+  accumEntropy: number;
+  accumApproxKl: number;
+  accumClipFraction: number;
+  batches: number;
+};
+
+function shuffleIndices(indices: Int32Array): void {
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const temp = indices[i];
+    indices[i] = indices[j];
+    indices[j] = temp;
+  }
+}
+
+function ema(previous: number, next: number): number {
+  if (!Number.isFinite(next)) {
+    return previous;
+  }
+  return previous === 0 ? next : previous * (1 - METRIC_EMA) + next * METRIC_EMA;
+}
 
 export class SnakeTrainer {
   private readonly environment = new SnakeEnvironment();
-  private readonly replay = new ReplayBuffer(REPLAY_CAPACITY);
-  private readonly nStepDiscount = Math.pow(GAMMA, N_STEP_RETURNS);
-
   private online = new ConvDQN();
-  private target = new ConvDQN();
 
   private trainingAgents: Agent[] = [];
-  private trainingStates: Uint8Array[] = [];
-  private nStepQueues: NStepEntry[][] = [];
+  private trainingStates: Float32Array[] = [];
+
+  private rolloutStates: Float32Array[] = [];
+  private rolloutActions = new Int32Array(0);
+  private rolloutRewards = new Float32Array(0);
+  private rolloutDones = new Uint8Array(0);
+  private rolloutValues = new Float32Array(0);
+  private rolloutLogProbs = new Float32Array(0);
+  private rolloutAdvantages = new Float32Array(0);
+  private rolloutReturns = new Float32Array(0);
+  private rolloutStep = 0;
+  private pendingPpoUpdate: PendingPpoUpdate | null = null;
 
   private showcaseAgent: Agent = this.environment.createAgent();
-  private showcaseObservation: Uint8Array = new Uint8Array(observationSize());
-  private showcaseQValues = new Float32Array(OUTPUTS);
+  private showcaseObservation: Float32Array = new Float32Array(observationSize());
+  private showcasePolicy = new Float32Array(OUTPUTS);
+  private showcaseLogits = new Float32Array(OUTPUTS);
   private showcaseAction = 0;
-
-  private terminalState = new Uint8Array(observationSize());
-  private readonly actionQScratch = new Float32Array(OUTPUTS);
+  private showcaseValue = 0;
 
   private rewardHistory: number[] = [];
   private episodeCount = 0;
   private totalSteps = 0;
-  private epsilon = EPSILON_START;
-  private priorityBeta = PRIORITY_BETA_START;
-  private loss = 0;
-  private bestReturn = Number.NEGATIVE_INFINITY;
-  private gradientSteps = 0;
-  private lastTargetSyncGradientStep = 0;
   private stepsPerSecond = 0;
+  private bestReturnValue = Number.NEGATIVE_INFINITY;
+
+  private totalLoss = 0;
+  private policyLoss = 0;
+  private valueLoss = 0;
+  private entropy = 0;
+  private approxKl = 0;
+  private clipFraction = 0;
+  private updates = 0;
 
   constructor() {
     this.reset();
@@ -64,53 +96,69 @@ export class SnakeTrainer {
 
   public reset(): void {
     this.online.dispose();
-    this.target.dispose();
     this.online = new ConvDQN();
-    this.target = new ConvDQN();
-    this.target.copyWeightsFrom(this.online);
-
-    this.replay.clear();
 
     this.trainingAgents = [];
     this.trainingStates = [];
-    this.nStepQueues = [];
 
     for (let i = 0; i < TRAIN_ENVS; i++) {
       const agent = this.environment.createAgent();
-      const state = this.environment.observe(agent);
       this.trainingAgents.push(agent);
-      this.trainingStates.push(state);
-      this.nStepQueues.push([]);
+      this.trainingStates.push(this.environment.observe(agent));
     }
 
-    this.showcaseAgent = this.environment.createAgent();
-    this.showcaseObservation = new Uint8Array(observationSize());
-    this.environment.observe(this.showcaseAgent, this.showcaseObservation);
-    this.online.predict(this.showcaseObservation, this.showcaseQValues);
-    this.showcaseAction = argMax(this.showcaseQValues);
+    const rolloutSize = PPO_ROLLOUT_STEPS * TRAIN_ENVS;
+    this.rolloutStates = new Array<Float32Array>(rolloutSize);
+    this.rolloutActions = new Int32Array(rolloutSize);
+    this.rolloutRewards = new Float32Array(rolloutSize);
+    this.rolloutDones = new Uint8Array(rolloutSize);
+    this.rolloutValues = new Float32Array(rolloutSize);
+    this.rolloutLogProbs = new Float32Array(rolloutSize);
+    this.rolloutAdvantages = new Float32Array(rolloutSize);
+    this.rolloutReturns = new Float32Array(rolloutSize);
+    this.rolloutStep = 0;
+    this.pendingPpoUpdate = null;
 
-    this.terminalState = new Uint8Array(observationSize());
+    this.showcaseAgent = this.environment.createAgent();
+    this.showcaseObservation = new Float32Array(observationSize());
+    this.showcasePolicy = new Float32Array(OUTPUTS);
+    this.showcaseLogits = new Float32Array(OUTPUTS);
+    this.refreshShowcasePrediction();
 
     this.rewardHistory = [];
     this.episodeCount = 0;
     this.totalSteps = 0;
-    this.epsilon = EPSILON_START;
-    this.priorityBeta = PRIORITY_BETA_START;
-    this.loss = 0;
-    this.bestReturn = Number.NEGATIVE_INFINITY;
-    this.gradientSteps = 0;
-    this.lastTargetSyncGradientStep = 0;
     this.stepsPerSecond = 0;
+    this.bestReturnValue = Number.NEGATIVE_INFINITY;
+
+    this.totalLoss = 0;
+    this.policyLoss = 0;
+    this.valueLoss = 0;
+    this.entropy = 0;
+    this.approxKl = 0;
+    this.clipFraction = 0;
+    this.updates = 0;
   }
 
-  public simulate(stepCount: number): void {
+  public simulate(stepCount: number): number {
+    let envSteps = 0;
+
     for (let i = 0; i < stepCount; i++) {
-      this.stepTrainingEnvironments();
-      this.trainOnlineNetwork();
+      if (this.pendingPpoUpdate) {
+        this.runPendingPpoUpdate(PPO_MINIBATCHES_PER_SIM_TICK);
+      } else {
+        this.stepTrainingEnvironments();
+        envSteps += TRAIN_ENVS;
+
+        if (this.rolloutStep >= PPO_ROLLOUT_STEPS) {
+          this.beginPpoUpdate();
+        }
+      }
+
       this.stepShowcase();
-      this.epsilon = this.currentEpsilon(this.totalSteps);
-      this.priorityBeta = this.currentPriorityBeta(this.totalSteps);
     }
+
+    return envSteps;
   }
 
   public simulateShowcase(stepCount: number): void {
@@ -120,24 +168,29 @@ export class SnakeTrainer {
   }
 
   public getState(): TrainerState {
-    const avgReturn = this.averageReturn();
-
     return {
       boardAgent: this.showcaseAgent,
       rewardHistory: this.rewardHistory,
       episodeCount: this.episodeCount,
       totalSteps: this.totalSteps,
-      epsilon: this.epsilon,
-      priorityBeta: this.priorityBeta,
-      replaySize: this.replay.size,
       stepsPerSecond: this.stepsPerSecond,
-      avgReturn,
+      avgReturn: this.averageReturn(),
       bestReturn:
-        this.bestReturn === Number.NEGATIVE_INFINITY ? 0 : this.bestReturn,
-      loss: this.loss,
+        this.bestReturnValue === Number.NEGATIVE_INFINITY
+          ? 0
+          : this.bestReturnValue,
+      totalLoss: this.totalLoss,
+      policyLoss: this.policyLoss,
+      valueLoss: this.valueLoss,
+      entropy: this.entropy,
+      approxKl: this.approxKl,
+      clipFraction: this.clipFraction,
+      updates: this.updates,
+      rolloutProgress: this.rolloutStep / PPO_ROLLOUT_STEPS,
       network: {
         observation: this.showcaseObservation,
-        qValues: this.showcaseQValues,
+        policy: this.showcasePolicy,
+        value: this.showcaseValue,
         action: this.showcaseAction,
       },
     };
@@ -152,122 +205,225 @@ export class SnakeTrainer {
   }
 
   private stepTrainingEnvironments(): void {
-    for (let i = 0; i < this.trainingAgents.length; i++) {
+    const rolloutOffset = this.rolloutStep * TRAIN_ENVS;
+
+    for (let i = 0; i < TRAIN_ENVS; i++) {
       const agent = this.trainingAgents[i];
       const state = this.trainingStates[i];
 
-      const action = this.selectAction(state, true);
-      const result = this.environment.step(agent, action);
+      const decision = this.online.act(state, true);
+      const result = this.environment.step(agent, decision.action);
       agent.episodeReturn += result.reward;
 
-      const nextState = result.done
-        ? this.terminalState
-        : this.environment.observe(agent);
-
-      this.nStepQueues[i].push({
-        state,
-        action,
-        reward: result.reward,
-        nextState,
-        done: result.done,
-      });
-      this.flushNStepQueue(this.nStepQueues[i]);
+      const writeIndex = rolloutOffset + i;
+      this.rolloutStates[writeIndex] = state;
+      this.rolloutActions[writeIndex] = decision.action;
+      this.rolloutRewards[writeIndex] = result.reward;
+      this.rolloutDones[writeIndex] = result.done ? 1 : 0;
+      this.rolloutValues[writeIndex] = decision.value;
+      this.rolloutLogProbs[writeIndex] = decision.logProb;
       this.totalSteps += 1;
 
       if (result.done) {
         this.recordEpisodeReturn(agent.episodeReturn);
         this.episodeCount += 1;
         this.environment.resetAgent(agent);
-        this.trainingStates[i] = this.environment.observe(agent);
-      } else {
-        this.trainingStates[i] = nextState;
       }
+
+      this.trainingStates[i] = this.environment.observe(agent);
     }
+
+    this.rolloutStep += 1;
   }
 
-  private flushNStepQueue(queue: NStepEntry[]): void {
-    while (queue.length > 0) {
-      const queueEndsWithDone = queue[queue.length - 1].done;
-      if (!queueEndsWithDone && queue.length < N_STEP_RETURNS) {
-        return;
-      }
+  private beginPpoUpdate(): void {
+    const batchSize = this.rolloutStep * TRAIN_ENVS;
+    if (batchSize <= 0) {
+      return;
+    }
 
-      let reward = 0;
-      let discount = 1;
-      let nextState = queue[0].nextState;
-      let done = false;
-      const steps = Math.min(N_STEP_RETURNS, queue.length);
+    const lastValues = new Float32Array(TRAIN_ENVS);
+    for (let i = 0; i < TRAIN_ENVS; i++) {
+      lastValues[i] = this.online.act(this.trainingStates[i], false).value;
+    }
 
-      for (let i = 0; i < steps; i++) {
-        const transition = queue[i];
-        reward += discount * transition.reward;
-        discount *= GAMMA;
-        nextState = transition.nextState;
-        done = transition.done;
-        if (done) {
+    this.computeGeneralizedAdvantages(lastValues);
+    this.normalizeAdvantages(batchSize);
+
+    const indices = new Int32Array(batchSize);
+    for (let i = 0; i < batchSize; i++) {
+      indices[i] = i;
+    }
+    shuffleIndices(indices);
+
+    this.pendingPpoUpdate = {
+      batchSize,
+      indices,
+      epoch: 0,
+      cursor: 0,
+      accumTotalLoss: 0,
+      accumPolicyLoss: 0,
+      accumValueLoss: 0,
+      accumEntropy: 0,
+      accumApproxKl: 0,
+      accumClipFraction: 0,
+      batches: 0,
+    };
+  }
+
+  private runPendingPpoUpdate(maxMiniBatches: number): void {
+    let processed = 0;
+
+    while (processed < maxMiniBatches && this.pendingPpoUpdate) {
+      const update = this.pendingPpoUpdate;
+      const start = update.cursor;
+      const end = Math.min(update.batchSize, start + PPO_MINIBATCH_SIZE);
+
+      if (end <= start) {
+        if (update.epoch >= PPO_EPOCHS - 1) {
+          this.finishPpoUpdate();
           break;
         }
+
+        update.epoch += 1;
+        update.cursor = 0;
+        shuffleIndices(update.indices);
+        continue;
       }
 
-      const first = queue[0];
-      this.replay.push({
-        state: first.state,
-        action: first.action,
-        reward,
-        nextState,
-        done,
+      const miniBatchSize = end - start;
+
+      const miniStates = new Array<ArrayLike<number>>(miniBatchSize);
+      const miniActions = new Int32Array(miniBatchSize);
+      const miniOldLogProbs = new Float32Array(miniBatchSize);
+      const miniAdvantages = new Float32Array(miniBatchSize);
+      const miniReturns = new Float32Array(miniBatchSize);
+
+      for (let i = 0; i < miniBatchSize; i++) {
+        const sourceIndex = update.indices[start + i];
+        miniStates[i] = this.rolloutStates[sourceIndex];
+        miniActions[i] = this.rolloutActions[sourceIndex];
+        miniOldLogProbs[i] = this.rolloutLogProbs[sourceIndex];
+        miniAdvantages[i] = this.rolloutAdvantages[sourceIndex];
+        miniReturns[i] = this.rolloutReturns[sourceIndex];
+      }
+
+      const result = this.online.trainBatch({
+        observations: miniStates,
+        actions: miniActions,
+        oldLogProbs: miniOldLogProbs,
+        advantages: miniAdvantages,
+        returns: miniReturns,
+        clipRange: PPO_CLIP_RANGE,
+        valueLossCoef: PPO_VALUE_LOSS_COEF,
+        entropyCoef: PPO_ENTROPY_COEF,
       });
 
-      queue.shift();
-    }
-  }
+      update.accumTotalLoss += result.totalLoss;
+      update.accumPolicyLoss += result.policyLoss;
+      update.accumValueLoss += result.valueLoss;
+      update.accumEntropy += result.entropy;
+      update.accumApproxKl += result.approxKl;
+      update.accumClipFraction += result.clipFraction;
+      update.batches += 1;
+      update.cursor = end;
+      processed += 1;
 
-  private selectAction(state: Uint8Array, explore: boolean): number {
-    if (explore && Math.random() < this.epsilon) {
-      return Math.floor(Math.random() * OUTPUTS);
-    }
-
-    this.online.predict(state, this.actionQScratch);
-    return argMax(this.actionQScratch);
-  }
-
-  private trainOnlineNetwork(): void {
-    if (this.replay.size < TRAIN_START_SIZE) {
-      return;
-    }
-
-    if (this.totalSteps % TRAIN_EVERY_STEPS !== 0) {
-      return;
-    }
-
-    let latestLoss = this.loss;
-
-    for (let i = 0; i < GRADIENT_STEPS; i++) {
-      const sample = this.replay.sample(BATCH_SIZE, this.priorityBeta);
-      if (sample.transitions.length === 0) {
+      if (result.approxKl > PPO_TARGET_KL) {
+        this.finishPpoUpdate();
         break;
       }
 
-      const result = this.online.trainBatch(
-        sample.transitions,
-        sample.weights,
-        this.target,
-        this.nStepDiscount,
-      );
-      latestLoss = result.loss;
-      this.replay.updatePriorities(sample.indices, result.tdErrors);
-      this.gradientSteps += 1;
+      if (update.cursor >= update.batchSize) {
+        if (update.epoch >= PPO_EPOCHS - 1) {
+          this.finishPpoUpdate();
+          break;
+        }
+
+        update.epoch += 1;
+        update.cursor = 0;
+        shuffleIndices(update.indices);
+      }
+    }
+  }
+
+  private finishPpoUpdate(): void {
+    if (!this.pendingPpoUpdate) {
+      return;
     }
 
-    this.loss =
-      this.loss === 0 ? latestLoss : this.loss * 0.97 + latestLoss * 0.03;
+    if (this.pendingPpoUpdate.batches > 0) {
+      const batchCount = this.pendingPpoUpdate.batches;
+      this.totalLoss = ema(
+        this.totalLoss,
+        this.pendingPpoUpdate.accumTotalLoss / batchCount,
+      );
+      this.policyLoss = ema(
+        this.policyLoss,
+        this.pendingPpoUpdate.accumPolicyLoss / batchCount,
+      );
+      this.valueLoss = ema(
+        this.valueLoss,
+        this.pendingPpoUpdate.accumValueLoss / batchCount,
+      );
+      this.entropy = ema(
+        this.entropy,
+        this.pendingPpoUpdate.accumEntropy / batchCount,
+      );
+      this.approxKl = ema(
+        this.approxKl,
+        this.pendingPpoUpdate.accumApproxKl / batchCount,
+      );
+      this.clipFraction = ema(
+        this.clipFraction,
+        this.pendingPpoUpdate.accumClipFraction / batchCount,
+      );
+      this.updates += 1;
+    }
 
-    if (
-      this.gradientSteps - this.lastTargetSyncGradientStep >=
-      TARGET_UPDATE_STEPS
-    ) {
-      this.target.copyWeightsFrom(this.online);
-      this.lastTargetSyncGradientStep = this.gradientSteps;
+    this.pendingPpoUpdate = null;
+    this.rolloutStep = 0;
+  }
+
+  private computeGeneralizedAdvantages(lastValues: Float32Array): void {
+    for (let env = 0; env < TRAIN_ENVS; env++) {
+      let gae = 0;
+      let nextValue = lastValues[env];
+
+      for (let step = this.rolloutStep - 1; step >= 0; step--) {
+        const index = step * TRAIN_ENVS + env;
+        const nonTerminal = this.rolloutDones[index] === 1 ? 0 : 1;
+
+        const delta =
+          this.rolloutRewards[index] +
+          GAMMA * nextValue * nonTerminal -
+          this.rolloutValues[index];
+
+        gae = delta + GAMMA * GAE_LAMBDA * nonTerminal * gae;
+
+        this.rolloutAdvantages[index] = gae;
+        this.rolloutReturns[index] = gae + this.rolloutValues[index];
+        nextValue = this.rolloutValues[index];
+      }
+    }
+  }
+
+  private normalizeAdvantages(batchSize: number): void {
+    let sum = 0;
+    for (let i = 0; i < batchSize; i++) {
+      sum += this.rolloutAdvantages[i];
+    }
+
+    const mean = sum / batchSize;
+    let variance = 0;
+    for (let i = 0; i < batchSize; i++) {
+      const centered = this.rolloutAdvantages[i] - mean;
+      variance += centered * centered;
+    }
+
+    const std = Math.sqrt(variance / batchSize + 1e-8);
+    for (let i = 0; i < batchSize; i++) {
+      this.rolloutAdvantages[i] = (this.rolloutAdvantages[i] - mean) / std;
     }
   }
 
@@ -276,18 +432,25 @@ export class SnakeTrainer {
       this.environment.resetAgent(this.showcaseAgent);
     }
 
-    this.environment.observe(this.showcaseAgent, this.showcaseObservation);
-    this.online.predict(this.showcaseObservation, this.showcaseQValues);
-    const action = argMax(this.showcaseQValues);
-    this.environment.step(this.showcaseAgent, action);
+    this.refreshShowcasePrediction();
+    this.environment.step(this.showcaseAgent, this.showcaseAction);
 
     if (!this.showcaseAgent.alive) {
       this.environment.resetAgent(this.showcaseAgent);
     }
 
+    this.refreshShowcasePrediction();
+  }
+
+  private refreshShowcasePrediction(): void {
     this.environment.observe(this.showcaseAgent, this.showcaseObservation);
-    this.online.predict(this.showcaseObservation, this.showcaseQValues);
-    this.showcaseAction = argMax(this.showcaseQValues);
+    const prediction = this.online.predict(
+      this.showcaseObservation,
+      this.showcasePolicy,
+      this.showcaseLogits,
+    );
+    this.showcaseValue = prediction.value;
+    this.showcaseAction = argMax(this.showcasePolicy);
   }
 
   private recordEpisodeReturn(value: number): void {
@@ -296,8 +459,8 @@ export class SnakeTrainer {
       this.rewardHistory.shift();
     }
 
-    if (value > this.bestReturn) {
-      this.bestReturn = value;
+    if (this.bestReturnValue < value) {
+      this.bestReturnValue = value;
     }
   }
 
@@ -318,18 +481,5 @@ export class SnakeTrainer {
     }
 
     return sum / windowSize;
-  }
-
-  private currentEpsilon(steps: number): number {
-    const progress = Math.min(1, steps / EPSILON_DECAY_STEPS);
-    return EPSILON_START + (EPSILON_END - EPSILON_START) * progress;
-  }
-
-  private currentPriorityBeta(steps: number): number {
-    const progress = Math.min(1, steps / PRIORITY_BETA_DECAY_STEPS);
-    return (
-      PRIORITY_BETA_START +
-      (PRIORITY_BETA_END - PRIORITY_BETA_START) * progress
-    );
   }
 }

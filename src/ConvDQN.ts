@@ -8,19 +8,209 @@ import {
   OBS_CHANNELS,
   OUTPUTS,
 } from "./config";
-import type { Transition } from "./types";
 
 const KERNEL_SIZE = 3;
-const CONV1_FILTERS = 12;
-const CONV2_FILTERS = 24;
-const HIDDEN_UNITS = 96;
+const STEM_FILTERS = 32;
+const TRUNK_FILTERS = 64;
+const RESIDUAL_BLOCKS = 3;
+const HEAD_HIDDEN_UNITS = 64;
+const LOG_EPSILON = 1e-8;
+
+type PPOTrainInputs = {
+  observations: readonly ArrayLike<number>[];
+  actions: Int32Array;
+  oldLogProbs: Float32Array;
+  advantages: Float32Array;
+  returns: Float32Array;
+  clipRange: number;
+  valueLossCoef: number;
+  entropyCoef: number;
+};
+
+export type PPOTrainResult = {
+  totalLoss: number;
+  policyLoss: number;
+  valueLoss: number;
+  entropy: number;
+  approxKl: number;
+  clipFraction: number;
+};
+
+export type PolicyAction = {
+  action: number;
+  logProb: number;
+  value: number;
+};
+
+export type PolicyValuePrediction = {
+  policy: Float32Array;
+  logits: Float32Array;
+  value: number;
+};
 
 let backendInitPromise: Promise<void> | null = null;
 
-export type TrainBatchResult = {
-  loss: number;
-  tdErrors: Float32Array;
-};
+function residualBlock(
+  input: tf.SymbolicTensor,
+  filters: number,
+  blockIndex: number,
+): tf.SymbolicTensor {
+  const conv1 = tf.layers
+    .conv2d({
+      filters,
+      kernelSize: KERNEL_SIZE,
+      padding: "same",
+      activation: "relu",
+      kernelInitializer: "heNormal",
+      biasInitializer: "zeros",
+      name: `res_${blockIndex}_conv1`,
+    })
+    .apply(input) as tf.SymbolicTensor;
+
+  const conv2 = tf.layers
+    .conv2d({
+      filters,
+      kernelSize: KERNEL_SIZE,
+      padding: "same",
+      activation: "linear",
+      kernelInitializer: "heNormal",
+      biasInitializer: "zeros",
+      name: `res_${blockIndex}_conv2`,
+    })
+    .apply(conv1) as tf.SymbolicTensor;
+
+  const added = tf.layers
+    .add({ name: `res_${blockIndex}_add` })
+    .apply([input, conv2]) as tf.SymbolicTensor;
+
+  return tf.layers
+    .activation({ activation: "relu", name: `res_${blockIndex}_relu` })
+    .apply(added) as tf.SymbolicTensor;
+}
+
+function createModel(gridSize: number): tf.LayersModel {
+  const input = tf.input({ shape: [gridSize, gridSize, OBS_CHANNELS] });
+
+  let trunk = tf.layers
+    .conv2d({
+      filters: STEM_FILTERS,
+      kernelSize: KERNEL_SIZE,
+      padding: "same",
+      activation: "relu",
+      kernelInitializer: "heNormal",
+      biasInitializer: "zeros",
+      name: "stem_conv",
+    })
+    .apply(input) as tf.SymbolicTensor;
+
+  for (let i = 0; i < RESIDUAL_BLOCKS; i++) {
+    trunk = residualBlock(trunk, STEM_FILTERS, i);
+  }
+
+  trunk = tf.layers
+    .conv2d({
+      filters: TRUNK_FILTERS,
+      kernelSize: KERNEL_SIZE,
+      padding: "same",
+      activation: "relu",
+      kernelInitializer: "heNormal",
+      biasInitializer: "zeros",
+      name: "trunk_conv",
+    })
+    .apply(trunk) as tf.SymbolicTensor;
+
+  const pooled = tf.layers
+    .globalAveragePooling2d({ name: "global_avg_pool" })
+    .apply(trunk) as tf.SymbolicTensor;
+
+  const policyHidden = tf.layers
+    .dense({
+      units: HEAD_HIDDEN_UNITS,
+      activation: "relu",
+      kernelInitializer: "heNormal",
+      biasInitializer: "zeros",
+      name: "policy_hidden",
+    })
+    .apply(pooled) as tf.SymbolicTensor;
+
+  const valueHidden = tf.layers
+    .dense({
+      units: HEAD_HIDDEN_UNITS,
+      activation: "relu",
+      kernelInitializer: "heNormal",
+      biasInitializer: "zeros",
+      name: "value_hidden",
+    })
+    .apply(pooled) as tf.SymbolicTensor;
+
+  const policyLogits = tf.layers
+    .dense({
+      units: OUTPUTS,
+      activation: "linear",
+      kernelInitializer: "heNormal",
+      biasInitializer: "zeros",
+      name: "policy_logits",
+    })
+    .apply(policyHidden) as tf.SymbolicTensor;
+
+  const value = tf.layers
+    .dense({
+      units: 1,
+      activation: "linear",
+      kernelInitializer: "heNormal",
+      biasInitializer: "zeros",
+      name: "value",
+    })
+    .apply(valueHidden) as tf.SymbolicTensor;
+
+  return tf.model({
+    inputs: input,
+    outputs: [policyLogits, value],
+  });
+}
+
+function softmax(logits: ArrayLike<number>, target: Float32Array): Float32Array {
+  let max = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < logits.length; i++) {
+    max = Math.max(max, logits[i]);
+  }
+
+  let sum = 0;
+  for (let i = 0; i < logits.length; i++) {
+    const value = Math.exp(logits[i] - max);
+    target[i] = value;
+    sum += value;
+  }
+
+  if (sum <= 0) {
+    const uniform = 1 / target.length;
+    for (let i = 0; i < target.length; i++) {
+      target[i] = uniform;
+    }
+    return target;
+  }
+
+  const inv = 1 / sum;
+  for (let i = 0; i < target.length; i++) {
+    target[i] *= inv;
+  }
+
+  return target;
+}
+
+function sampleFromDistribution(probabilities: ArrayLike<number>): number {
+  const threshold = Math.random();
+  let cumulative = 0;
+
+  for (let i = 0; i < probabilities.length; i++) {
+    cumulative += probabilities[i];
+    if (threshold <= cumulative) {
+      return i;
+    }
+  }
+
+  return probabilities.length - 1;
+}
 
 function argMax(values: ArrayLike<number>): number {
   let bestIndex = 0;
@@ -61,89 +251,14 @@ export async function ensureTfjsBackend(): Promise<void> {
   await backendInitPromise;
 }
 
-function createModel(gridSize: number): tf.LayersModel {
-  const input = tf.input({ shape: [gridSize, gridSize, OBS_CHANNELS] });
-
-  const conv1 = tf.layers
-    .conv2d({
-      filters: CONV1_FILTERS,
-      kernelSize: KERNEL_SIZE,
-      padding: "same",
-      activation: "relu",
-      kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
-    })
-    .apply(input) as tf.SymbolicTensor;
-
-  const conv2 = tf.layers
-    .conv2d({
-      filters: CONV2_FILTERS,
-      kernelSize: KERNEL_SIZE,
-      padding: "same",
-      activation: "relu",
-      kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
-    })
-    .apply(conv1) as tf.SymbolicTensor;
-
-  const flat = tf.layers.flatten().apply(conv2) as tf.SymbolicTensor;
-
-  const valueHidden = tf.layers
-    .dense({
-      units: HIDDEN_UNITS,
-      activation: "relu",
-      kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
-    })
-    .apply(flat) as tf.SymbolicTensor;
-
-  const advantageHidden = tf.layers
-    .dense({
-      units: HIDDEN_UNITS,
-      activation: "relu",
-      kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
-    })
-    .apply(flat) as tf.SymbolicTensor;
-
-  const value = tf.layers
-    .dense({
-      units: 1,
-      activation: "linear",
-      kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
-    })
-    .apply(valueHidden) as tf.SymbolicTensor;
-
-  const advantage = tf.layers
-    .dense({
-      units: OUTPUTS,
-      activation: "linear",
-      kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
-    })
-    .apply(advantageHidden) as tf.SymbolicTensor;
-
-  return tf.model({
-    inputs: input,
-    outputs: [value, advantage],
-  });
-}
-
-function combineDuelingHeads(
-  value: tf.Tensor2D,
-  advantage: tf.Tensor2D,
-): tf.Tensor2D {
-  const centeredAdvantage = advantage.sub(advantage.mean(1, true));
-  return value.add(centeredAdvantage);
-}
-
 export class ConvDQN {
   private readonly width: number;
   private readonly area: number;
   private readonly model: tf.LayersModel;
   private readonly optimizer: tf.Optimizer;
   private readonly singleInputScratch: Float32Array;
+  private readonly singlePolicyScratch: Float32Array;
+  private readonly singleLogitsScratch: Float32Array;
 
   constructor(gridSize = GRID_SIZE) {
     this.width = gridSize;
@@ -156,22 +271,35 @@ export class ConvDQN {
       ADAM_EPSILON,
     );
     this.singleInputScratch = new Float32Array(this.area * OBS_CHANNELS);
+    this.singlePolicyScratch = new Float32Array(OUTPUTS);
+    this.singleLogitsScratch = new Float32Array(OUTPUTS);
   }
 
-  public copyWeightsFrom(other: ConvDQN): void {
-    tf.tidy(() => {
-      const sourceWeights = other.model.getWeights();
-      const copiedWeights = sourceWeights.map((weight) => weight.clone());
-      this.model.setWeights(copiedWeights);
-    });
+  public act(input: ArrayLike<number>, sample = true): PolicyAction {
+    const prediction = this.predict(
+      input,
+      this.singlePolicyScratch,
+      this.singleLogitsScratch,
+    );
+    const action = sample
+      ? sampleFromDistribution(prediction.policy)
+      : argMax(prediction.policy);
+
+    return {
+      action,
+      logProb: Math.log(Math.max(LOG_EPSILON, prediction.policy[action])),
+      value: prediction.value,
+    };
   }
 
   public predict(
     input: ArrayLike<number>,
-    target = new Float32Array(OUTPUTS),
-  ): Float32Array {
+    policyTarget: Float32Array = new Float32Array(OUTPUTS),
+    logitsTarget: Float32Array = new Float32Array(OUTPUTS),
+  ): PolicyValuePrediction {
     this.writeObservationToNhwc(input, this.singleInputScratch, 0);
 
+    let value = 0;
     tf.tidy(() => {
       const state = tf.tensor4d(this.singleInputScratch, [
         1,
@@ -179,96 +307,98 @@ export class ConvDQN {
         this.width,
         OBS_CHANNELS,
       ]);
-      const qTensor = this.predictQ(state, false);
-      target.set(qTensor.dataSync());
+      const [policyLogits, valueTensor] = this.predictPolicyAndValue(state, false);
+      logitsTarget.set(policyLogits.dataSync());
+      value = valueTensor.dataSync()[0];
     });
 
-    return target;
+    softmax(logitsTarget, policyTarget);
+
+    return {
+      policy: policyTarget,
+      logits: logitsTarget,
+      value,
+    };
   }
 
-  public trainBatch(
-    batch: readonly Transition[],
-    importanceWeights: Float32Array,
-    targetNetwork: ConvDQN,
-    bootstrapDiscount: number,
-  ): TrainBatchResult {
-    if (batch.length === 0) {
-      return { loss: 0, tdErrors: new Float32Array(0) };
+  public trainBatch(inputs: PPOTrainInputs): PPOTrainResult {
+    const batchSize = inputs.observations.length;
+    if (
+      batchSize === 0 ||
+      inputs.actions.length !== batchSize ||
+      inputs.oldLogProbs.length !== batchSize ||
+      inputs.advantages.length !== batchSize ||
+      inputs.returns.length !== batchSize
+    ) {
+      return {
+        totalLoss: 0,
+        policyLoss: 0,
+        valueLoss: 0,
+        entropy: 0,
+        approxKl: 0,
+        clipFraction: 0,
+      };
     }
 
-    const batchSize = batch.length;
     const channelSize = this.area * OBS_CHANNELS;
     const statesData = new Float32Array(batchSize * channelSize);
-    const nextStatesData = new Float32Array(batchSize * channelSize);
-    const actionsData = new Int32Array(batchSize);
-    const rewardsData = new Float32Array(batchSize);
-    const donesData = new Float32Array(batchSize);
-    const weightsData = new Float32Array(batchSize);
 
     for (let i = 0; i < batchSize; i++) {
-      const transition = batch[i];
-      const offset = i * channelSize;
-
-      this.writeObservationToNhwc(transition.state, statesData, offset);
-      this.writeObservationToNhwc(transition.nextState, nextStatesData, offset);
-
-      actionsData[i] = transition.action;
-      rewardsData[i] = transition.reward;
-      donesData[i] = transition.done ? 1 : 0;
-      weightsData[i] = importanceWeights[i] ?? 1;
+      this.writeObservationToNhwc(
+        inputs.observations[i],
+        statesData,
+        i * channelSize,
+      );
     }
 
     return tf.tidy(() => {
-      const shape: [number, number, number, number] = [
+      const statesTensor = tf.tensor4d(statesData, [
         batchSize,
         this.width,
         this.width,
         OBS_CHANNELS,
-      ];
+      ]);
+      const actionsTensor = tf.tensor1d(inputs.actions, "int32");
+      const oldLogProbsTensor = tf.tensor1d(inputs.oldLogProbs, "float32");
+      const advantagesTensor = tf.tensor1d(inputs.advantages, "float32");
+      const returnsTensor = tf.tensor1d(inputs.returns, "float32");
 
-      const statesTensor = tf.tensor4d(statesData, shape);
-      const nextStatesTensor = tf.tensor4d(nextStatesData, shape);
-      const actionsTensor = tf.tensor1d(actionsData, "int32");
-      const rewardsTensor = tf.tensor1d(rewardsData, "float32");
-      const donesTensor = tf.tensor1d(donesData, "float32");
-      const weightsTensor = tf.tensor1d(weightsData, "float32");
-      const discountTensor = tf.scalar(bootstrapDiscount, "float32");
-
-      const nextOnlineQ = this.predictQ(nextStatesTensor, false);
-      const bestNextActions = nextOnlineQ.argMax(1);
-      const nextTargetQ = targetNetwork.predictQ(nextStatesTensor, false);
-      const nextActionMask = tf
-        .oneHot(bestNextActions, OUTPUTS)
-        .asType("float32");
-      const nextChosenQ = nextTargetQ.mul(nextActionMask).sum(1);
-      const targetValues = rewardsTensor.add(
-        tf.onesLike(donesTensor)
-          .sub(donesTensor)
-          .mul(discountTensor)
-          .mul(nextChosenQ),
-      );
-
-      const currentQ = this.predictQ(statesTensor, false);
-      const actionMask = tf.oneHot(actionsTensor, OUTPUTS).asType("float32");
-      const predictedQ = currentQ.mul(actionMask).sum(1);
-      const tdError = targetValues.sub(predictedQ);
-      const tdErrorsArray = tdError.abs().dataSync();
-
-      const lossTensor = this.optimizer.minimize(() => {
-        const qValues = this.predictQ(statesTensor, true);
-        const predicted = qValues.mul(actionMask).sum(1);
-        const error = predicted.sub(targetValues);
-        const absError = error.abs();
-        const quadratic = absError.clipByValue(0, 1);
-        const linear = absError.sub(quadratic);
-        const huber = quadratic.square().mul(0.5).add(linear);
-        return huber.mul(weightsTensor).mean();
+      const optimizedLoss = this.optimizer.minimize(() => {
+        const [policyLogits, values] = this.predictPolicyAndValue(statesTensor, true);
+        const terms = this.computeLossTerms(
+          policyLogits,
+          values,
+          actionsTensor,
+          oldLogProbsTensor,
+          advantagesTensor,
+          returnsTensor,
+          inputs.clipRange,
+          inputs.valueLossCoef,
+          inputs.entropyCoef,
+        );
+        return terms.totalLoss;
       }, true);
 
-      const loss = lossTensor ? lossTensor.dataSync()[0] : 0;
+      const [policyLogits, values] = this.predictPolicyAndValue(statesTensor, false);
+      const terms = this.computeLossTerms(
+        policyLogits,
+        values,
+        actionsTensor,
+        oldLogProbsTensor,
+        advantagesTensor,
+        returnsTensor,
+        inputs.clipRange,
+        inputs.valueLossCoef,
+        inputs.entropyCoef,
+      );
+
       return {
-        loss,
-        tdErrors: new Float32Array(tdErrorsArray),
+        totalLoss: optimizedLoss ? optimizedLoss.dataSync()[0] : terms.totalLoss.dataSync()[0],
+        policyLoss: terms.policyLoss.dataSync()[0],
+        valueLoss: terms.valueLoss.dataSync()[0],
+        entropy: terms.entropy.dataSync()[0],
+        approxKl: terms.approxKl.dataSync()[0],
+        clipFraction: terms.clipFraction.dataSync()[0],
       };
     });
   }
@@ -278,15 +408,83 @@ export class ConvDQN {
     this.optimizer.dispose();
   }
 
-  private predictQ(input: tf.Tensor4D, training: boolean): tf.Tensor2D {
+  private predictPolicyAndValue(
+    input: tf.Tensor4D,
+    training: boolean,
+  ): [tf.Tensor2D, tf.Tensor2D] {
     const outputs = this.model.apply(input, { training });
+
     if (!Array.isArray(outputs) || outputs.length !== 2) {
-      throw new Error("Dueling model must output [value, advantage]");
+      throw new Error("Actor-critic model must output [policyLogits, value]");
     }
 
-    const value = outputs[0] as tf.Tensor2D;
-    const advantage = outputs[1] as tf.Tensor2D;
-    return combineDuelingHeads(value, advantage);
+    return [outputs[0] as tf.Tensor2D, outputs[1] as tf.Tensor2D];
+  }
+
+  private computeLossTerms(
+    policyLogits: tf.Tensor2D,
+    values: tf.Tensor2D,
+    actions: tf.Tensor1D,
+    oldLogProbs: tf.Tensor1D,
+    advantages: tf.Tensor1D,
+    returns: tf.Tensor1D,
+    clipRange: number,
+    valueLossCoef: number,
+    entropyCoef: number,
+  ): {
+    totalLoss: tf.Scalar;
+    policyLoss: tf.Scalar;
+    valueLoss: tf.Scalar;
+    entropy: tf.Scalar;
+    approxKl: tf.Scalar;
+    clipFraction: tf.Scalar;
+  } {
+    const actionMask = tf.oneHot(actions, OUTPUTS).asType("float32");
+    const logProbAll = tf.logSoftmax(policyLogits);
+    const selectedLogProbs = logProbAll.mul(actionMask).sum(1);
+
+    const ratio = selectedLogProbs.sub(oldLogProbs).exp();
+    const unclipped = ratio.mul(advantages);
+    const clipped = ratio
+      .clipByValue(1 - clipRange, 1 + clipRange)
+      .mul(advantages);
+
+    const policyLoss = tf.neg(tf.minimum(unclipped, clipped).mean()) as tf.Scalar;
+
+    const valuePredictions = values.squeeze([1]);
+    const valueLoss = returns
+      .sub(valuePredictions)
+      .square()
+      .mean()
+      .mul(0.5) as tf.Scalar;
+
+    const probabilities = tf.softmax(policyLogits);
+    const entropy = probabilities
+      .mul(logProbAll)
+      .sum(1)
+      .neg()
+      .mean() as tf.Scalar;
+
+    const approxKl = oldLogProbs.sub(selectedLogProbs).mean() as tf.Scalar;
+    const clipFraction = ratio
+      .sub(tf.scalar(1))
+      .abs()
+      .greater(tf.scalar(clipRange))
+      .asType("float32")
+      .mean() as tf.Scalar;
+
+    const totalLoss = policyLoss
+      .add(valueLoss.mul(valueLossCoef))
+      .sub(entropy.mul(entropyCoef)) as tf.Scalar;
+
+    return {
+      totalLoss,
+      policyLoss,
+      valueLoss,
+      entropy,
+      approxKl,
+      clipFraction,
+    };
   }
 
   private writeObservationToNhwc(

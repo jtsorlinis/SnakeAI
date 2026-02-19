@@ -77,9 +77,9 @@ export class SnakeRenderer {
     this.netCtx.fillRect(0, 0, NET_WIDTH, NET_HEIGHT);
 
     const obs = state.network.observation;
-    const qValues = state.network.qValues;
+    const policy = state.network.policy;
 
-    if (!obs || !qValues) {
+    if (!obs || !policy) {
       this.netCtx.fillStyle = "rgba(255,255,255,0.8)";
       this.netCtx.font = "14px JetBrains Mono, monospace";
       this.netCtx.fillText("Waiting for observation", 16, 26);
@@ -100,8 +100,6 @@ export class SnakeRenderer {
     this.netCtx.font = "13px JetBrains Mono, monospace";
     this.netCtx.fillText("Observation channels", marginX, 18);
 
-    const colors = ["#66bb6a", "#26a69a", "#ef5350"];
-
     for (let channel = 0; channel < OBS_CHANNELS; channel++) {
       const panelX = marginX + channel * (panelWidth + gap);
       const gridX = panelX + Math.floor((panelWidth - panelGridSize) / 2);
@@ -121,7 +119,7 @@ export class SnakeRenderer {
           const px = gridX + x * cellSize;
           const py = gridY + y * cellSize;
 
-          this.netCtx.fillStyle = value > 0 ? colors[channel] : "rgba(255,255,255,0.04)";
+          this.netCtx.fillStyle = this.observationCellColor(channel, value);
           this.netCtx.fillRect(px, py, cellSize - 1, cellSize - 1);
         }
       }
@@ -131,19 +129,14 @@ export class SnakeRenderer {
     const barLeft = 142;
     const barMaxWidth = NET_WIDTH - barLeft - 24;
 
-    let maxAbs = 0.001;
-    for (let i = 0; i < qValues.length; i++) {
-      maxAbs = Math.max(maxAbs, Math.abs(qValues[i]));
-    }
-
     this.netCtx.fillStyle = "rgba(255, 255, 255, 0.88)";
     this.netCtx.font = "13px JetBrains Mono, monospace";
-    this.netCtx.fillText("Q-values", marginX, qTop - 16);
+    this.netCtx.fillText("Policy probabilities", marginX, qTop - 16);
 
-    for (let i = 0; i < qValues.length; i++) {
+    for (let i = 0; i < policy.length; i++) {
       const y = qTop + i * 34;
-      const value = qValues[i];
-      const width = (Math.abs(value) / maxAbs) * barMaxWidth;
+      const value = policy[i];
+      const width = Math.max(0, Math.min(1, value)) * barMaxWidth;
 
       this.netCtx.fillStyle = "rgba(255,255,255,0.85)";
       this.netCtx.font = "11px JetBrains Mono, monospace";
@@ -152,7 +145,7 @@ export class SnakeRenderer {
       this.netCtx.fillStyle = "rgba(255,255,255,0.08)";
       this.netCtx.fillRect(barLeft, y, barMaxWidth, 14);
 
-      this.netCtx.fillStyle = value >= 0 ? "rgba(102, 187, 106, 0.9)" : "rgba(239, 83, 80, 0.9)";
+      this.netCtx.fillStyle = "rgba(102, 187, 106, 0.9)";
       this.netCtx.fillRect(barLeft, y, width, 14);
 
       if (i === state.network.action) {
@@ -162,17 +155,60 @@ export class SnakeRenderer {
       }
 
       this.netCtx.fillStyle = "rgba(255,255,255,0.85)";
-      this.netCtx.fillText(value.toFixed(3), barLeft + barMaxWidth - 54, y + 11);
+      this.netCtx.fillText(
+        `${(value * 100).toFixed(1)}%`,
+        barLeft + barMaxWidth - 54,
+        y + 11,
+      );
     }
 
-    const footerY = qTop + qValues.length * 34 + 14;
+    const valueY = qTop + policy.length * 34 + 6;
+    this.netCtx.fillStyle = "rgba(255,255,255,0.86)";
+    this.netCtx.font = "12px JetBrains Mono, monospace";
+    this.netCtx.fillText(
+      `Value estimate: ${state.network.value.toFixed(3)}`,
+      marginX,
+      valueY,
+    );
+
+    const footerY = valueY + 18;
     this.netCtx.fillStyle = "rgba(255,255,255,0.78)";
     this.netCtx.font = "11px JetBrains Mono, monospace";
     this.netCtx.fillText(
-      `epsilon=${state.epsilon.toFixed(3)}   replay=${state.replaySize}   loss=${state.loss.toFixed(4)}`,
+      `loss=${state.totalLoss.toFixed(4)}   policy=${state.policyLoss.toFixed(4)}   value=${state.valueLoss.toFixed(4)}`,
       marginX,
       footerY,
     );
+
+    this.netCtx.fillText(
+      `entropy=${state.entropy.toFixed(4)}   kl=${state.approxKl.toFixed(4)}   clip=${state.clipFraction.toFixed(3)}`,
+      marginX,
+      footerY + 14,
+    );
+  }
+
+  private observationCellColor(channel: number, value: number): string {
+    if (Math.abs(value) < 1e-6) {
+      return "rgba(255,255,255,0.04)";
+    }
+
+    const alpha = 0.15 + 0.75 * Math.min(1, Math.abs(value));
+
+    if (channel === 0) {
+      return `rgba(239, 83, 80, ${alpha})`;
+    }
+
+    if (channel === 1) {
+      return `rgba(102, 187, 106, ${alpha})`;
+    }
+
+    if (channel === 2) {
+      return `rgba(38, 166, 154, ${alpha})`;
+    }
+
+    return value > 0
+      ? `rgba(102, 187, 106, ${alpha})`
+      : `rgba(66, 165, 245, ${alpha})`;
   }
 
   private drawBoard(state: TrainerState): void {
@@ -289,12 +325,16 @@ export class SnakeRenderer {
       `Steps: ${state.totalSteps.toLocaleString()}`,
       `Env steps/s: ${state.stepsPerSecond.toFixed(0)}`,
       `Grid: ${GRID_SIZE}x${GRID_SIZE}`,
-      `Epsilon: ${state.epsilon.toFixed(3)}`,
-      `PER beta: ${state.priorityBeta.toFixed(3)}`,
-      `Replay size: ${state.replaySize.toLocaleString()}`,
+      `PPO updates: ${state.updates.toLocaleString()}`,
+      `Rollout progress: ${(state.rolloutProgress * 100).toFixed(0)}%`,
       `Avg return (last 100): ${state.avgReturn.toFixed(3)}`,
       `Best return: ${state.bestReturn.toFixed(3)}`,
-      `Loss (EMA): ${state.loss.toFixed(4)}`,
+      `Loss (EMA): ${state.totalLoss.toFixed(4)}`,
+      `Policy loss: ${state.policyLoss.toFixed(4)}`,
+      `Value loss: ${state.valueLoss.toFixed(4)}`,
+      `Entropy: ${state.entropy.toFixed(4)}`,
+      `Approx KL: ${state.approxKl.toFixed(4)}`,
+      `Clip fraction: ${state.clipFraction.toFixed(3)}`,
     ].join("<br>");
   }
 }

@@ -16,9 +16,11 @@ export type StepResult = {
   done: boolean;
 };
 
-const CHANNEL_HEAD = 0;
-const CHANNEL_BODY = 1;
-const CHANNEL_FOOD = 2;
+const CHANNEL_FOOD = 0;
+const CHANNEL_HEAD = 1;
+const CHANNEL_BODY_AGE = 2;
+const CHANNEL_DIR_X = 3;
+const CHANNEL_DIR_Y = 4;
 
 export class SnakeEnvironment {
   public createAgent(): Agent {
@@ -129,24 +131,34 @@ export class SnakeEnvironment {
     };
   }
 
-  public observe(agent: Agent, target?: Uint8Array): Uint8Array {
+  public observe(agent: Agent, target?: Float32Array): Float32Array {
     const size = GRID_SIZE * GRID_SIZE;
-    const obs = target ?? new Uint8Array(OBS_CHANNELS * size);
+    const obs = target ?? new Float32Array(OBS_CHANNELS * size);
     obs.fill(0);
 
     if (!agent.alive || agent.body.length === 0) {
       return obs;
     }
 
+    obs[this.obsIndex(CHANNEL_FOOD, agent.food.x, agent.food.y)] = 1;
+
     const head = agent.body[0];
     obs[this.obsIndex(CHANNEL_HEAD, head.x, head.y)] = 1;
 
+    const denominator = Math.max(1, agent.body.length - 1);
     for (let i = 1; i < agent.body.length; i++) {
       const part = agent.body[i];
-      obs[this.obsIndex(CHANNEL_BODY, part.x, part.y)] = 1;
+      const k = agent.body.length - 1 - i;
+      obs[this.obsIndex(CHANNEL_BODY_AGE, part.x, part.y)] = k / denominator;
     }
 
-    obs[this.obsIndex(CHANNEL_FOOD, agent.food.x, agent.food.y)] = 1;
+    const direction = DIRS[agent.dir];
+    const dirXBase = CHANNEL_DIR_X * size;
+    const dirYBase = CHANNEL_DIR_Y * size;
+    for (let i = 0; i < size; i++) {
+      obs[dirXBase + i] = direction.x;
+      obs[dirYBase + i] = direction.y;
+    }
 
     return obs;
   }
