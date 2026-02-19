@@ -185,21 +185,17 @@ export class SnakeEnvironment {
       const y = head.y + direction.y * distance;
 
       if (this.outOfBounds(x, y)) {
-        return GRID_SIZE + 1;
+        return 0;
       }
 
       for (let i = 1; i < snake.length; i++) {
         if (snake[i].x === x && snake[i].y === y) {
-          return distance;
+          return 1 / distance;
         }
       }
     }
 
-    return GRID_SIZE + 1;
-  }
-
-  private toTailSignal(distance: number): number {
-    return distance <= GRID_SIZE ? 1 / distance : 0;
+    return 0;
   }
 
   private checkForFood(head: Point, direction: Point, food: Point): number {
@@ -214,23 +210,17 @@ export class SnakeEnvironment {
     const front = DIRS[agent.dir];
     const left = DIRS[(agent.dir + 3) % 4];
     const right = DIRS[(agent.dir + 1) % 4];
-    const leftObstacle = this.checkForObstacle(head, left, agent.body);
-    const rightObstacle = this.checkForObstacle(head, right, agent.body);
-    const leftTail = this.toTailSignal(
-      this.findTailDistance(head, left, agent.body),
-    );
-    const rightTail = this.toTailSignal(
-      this.findTailDistance(head, right, agent.body),
-    );
 
     target[0] = this.checkForObstacle(head, front, agent.body);
-    target[1] = rightObstacle - leftObstacle;
-    target[2] = this.toTailSignal(this.findTailDistance(head, front, agent.body));
-    target[3] = rightTail - leftTail;
-    target[4] = this.checkForFood(head, front, agent.food) > 0 ? 1 : 0;
-    target[5] = this.checkForFood(head, left, agent.food);
-    target[6] = front.x;
-    target[7] = front.y;
+    target[1] = this.checkForObstacle(head, left, agent.body);
+    target[2] = this.checkForObstacle(head, right, agent.body);
+    target[3] = this.findTailDistance(head, front, agent.body);
+    target[4] = this.findTailDistance(head, left, agent.body);
+    target[5] = this.findTailDistance(head, right, agent.body);
+    target[6] = this.checkForFood(head, front, agent.food) > 0 ? 1 : 0;
+    target[7] = this.checkForFood(head, left, agent.food);
+    target[8] = front.x;
+    target[9] = front.y;
   }
 
   private chooseAction(agent: Agent): number {

@@ -25,7 +25,7 @@ export let BASE_HUNGER = 0;
 export const NORMAL_STEPS_PER_SECOND = 30;
 export const TURBO_TIME_BUDGET_MS = 12;
 
-export const INPUTS = 8;
+export const INPUTS = 10;
 export const OUTPUTS = 3;
 export const BASE_HIDDEN_UNITS = Math.max(
   2,
@@ -110,9 +110,11 @@ export const NET_HOVER_RADIUS = 8;
 
 export const INPUT_LABELS = [
   "Block Ahead",
-  "Block Side",
+  "Block Left",
+  "Block Right",
   "Tail Ahead",
-  "Tail Side",
+  "Tail Left",
+  "Tail Right",
   "Food Ahead",
   "Food Side",
   "Dir X",
