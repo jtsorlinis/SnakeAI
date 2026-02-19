@@ -16,10 +16,10 @@ export const CHART_WIDTH = 300;
 export const CHART_HEIGHT = 140;
 
 export const POP_SIZE = 180;
-export const ELITE_COUNT = 8;
-export const TOURNAMENT_SIZE = 4;
-export const MUTATION_RATE = 0.08;
-export const MUTATION_SIZE = 0.35;
+export const CMA_INITIAL_SIGMA = 0.6;
+export const CMA_MIN_SIGMA = 0.02;
+export const CMA_MAX_SIGMA = 2.5;
+export const CMA_MIN_VARIANCE = 1e-8;
 export let BASE_HUNGER = 0;
 
 export const NORMAL_STEPS_PER_SECOND = 30;
