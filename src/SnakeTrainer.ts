@@ -111,6 +111,12 @@ export class SnakeTrainer {
     }
   }
 
+  public simulateShowcase(stepCount: number): void {
+    for (let i = 0; i < stepCount; i++) {
+      this.stepShowcase();
+    }
+  }
+
   public getState(): TrainerState {
     const avgReturn = this.averageReturn();
 

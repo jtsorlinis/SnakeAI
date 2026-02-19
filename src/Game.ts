@@ -11,18 +11,22 @@ import {
 import { SnakeRenderer } from "./SnakeRenderer";
 import { SnakeTrainer } from "./SnakeTrainer";
 
+const PAUSED_FPS = 30;
+const PAUSED_FRAME_MS = 1000 / PAUSED_FPS;
+
 export class Game {
   private trainer = new SnakeTrainer();
   private readonly renderer: SnakeRenderer;
-  private readonly turboToggle: HTMLInputElement;
+  private readonly pauseButton: HTMLButtonElement;
   private readonly gridDownButton: HTMLButtonElement;
   private readonly gridUpButton: HTMLButtonElement;
   private readonly resetButton: HTMLButtonElement;
   private readonly gridValue: HTMLElement;
 
-  private turboMode = false;
+  private paused = false;
   private stepBudget = 0;
   private lastFrameTime = 0;
+  private lastPausedRenderTime = 0;
   private envStepsPerSecond = 0;
   private throughputStepAccumulator = 0;
   private throughputTimeAccumulator = 0;
@@ -32,8 +36,8 @@ export class Game {
     const boardCanvas = this.getCanvas("gameCanvas");
     const chartCanvas = this.getCanvas("chartCanvas");
     const statsElement = this.getElement("stats");
-    this.turboToggle = this.getInput("turboToggle");
     const networkToggle = this.getInput("networkToggle");
+    this.pauseButton = this.getButton("pauseTraining");
     this.gridDownButton = this.getButton("gridDown");
     this.gridUpButton = this.getButton("gridUp");
     this.resetButton = this.getButton("resetTraining");
@@ -46,17 +50,14 @@ export class Game {
       statsElement,
     });
 
-    this.turboMode = this.turboToggle.checked;
-    this.turboToggle.addEventListener("change", () => {
-      this.turboMode = this.turboToggle.checked;
-      this.stepBudget = 0;
-    });
-
     this.renderer.setShowNetwork(networkToggle.checked);
     networkToggle.addEventListener("change", () => {
       this.renderer.setShowNetwork(networkToggle.checked);
     });
 
+    this.pauseButton.addEventListener("click", () => {
+      this.togglePause();
+    });
     this.gridDownButton.addEventListener("click", () => {
       this.updateGridSize(-GRID_SIZE_STEP);
     });
@@ -67,6 +68,7 @@ export class Game {
       this.resetTraining();
     });
     this.refreshGridControls();
+    this.updatePauseButton();
 
     requestAnimationFrame(this.loop);
   }
@@ -118,6 +120,7 @@ export class Game {
     this.trainer.setStepsPerSecond(this.envStepsPerSecond);
     this.stepBudget = 0;
     this.lastFrameTime = 0;
+    this.lastPausedRenderTime = 0;
   }
 
   private refreshGridControls(): void {
@@ -134,9 +137,41 @@ export class Game {
     this.trainer.setStepsPerSecond(this.envStepsPerSecond);
     this.stepBudget = 0;
     this.lastFrameTime = 0;
+    this.lastPausedRenderTime = 0;
+  }
+
+  private togglePause(): void {
+    this.paused = !this.paused;
+    this.envStepsPerSecond = 0;
+    this.throughputStepAccumulator = 0;
+    this.throughputTimeAccumulator = 0;
+    this.trainer.setStepsPerSecond(0);
+    this.stepBudget = 0;
+    this.lastFrameTime = 0;
+    this.lastPausedRenderTime = 0;
+    this.updatePauseButton();
+  }
+
+  private updatePauseButton(): void {
+    this.pauseButton.textContent = this.paused
+      ? "Resume Training"
+      : "Pause Training";
   }
 
   private loop = (time: number): void => {
+    if (this.paused) {
+      if (
+        this.lastPausedRenderTime !== 0 &&
+        time - this.lastPausedRenderTime < PAUSED_FRAME_MS
+      ) {
+        requestAnimationFrame(this.loop);
+        return;
+      }
+      this.lastPausedRenderTime = time;
+    } else {
+      this.lastPausedRenderTime = 0;
+    }
+
     if (this.lastFrameTime === 0) {
       this.lastFrameTime = time;
     }
@@ -145,21 +180,19 @@ export class Game {
     this.lastFrameTime = time;
 
     let simulatedTicks = 0;
-
-    if (this.turboMode) {
+    if (this.paused) {
+      this.stepBudget += deltaSeconds * NORMAL_STEPS_PER_SECOND;
+      const showcaseSteps = Math.floor(this.stepBudget);
+      if (showcaseSteps > 0) {
+        this.stepBudget -= showcaseSteps;
+        this.trainer.simulateShowcase(showcaseSteps);
+      }
+    } else {
       const start = performance.now();
       do {
         this.trainer.simulate(1);
         simulatedTicks += 1;
       } while (performance.now() - start < TURBO_TIME_BUDGET_MS);
-    } else {
-      this.stepBudget += deltaSeconds * NORMAL_STEPS_PER_SECOND;
-      const stepCount = Math.floor(this.stepBudget);
-      if (stepCount > 0) {
-        this.stepBudget -= stepCount;
-        this.trainer.simulate(stepCount);
-        simulatedTicks = stepCount;
-      }
     }
 
     if (simulatedTicks > 0) {
@@ -172,6 +205,8 @@ export class Game {
         this.throughputStepAccumulator = 0;
         this.throughputTimeAccumulator = 0;
       }
+    } else if (this.paused && this.envStepsPerSecond !== 0) {
+      this.envStepsPerSecond = 0;
     }
 
     this.trainer.setStepsPerSecond(this.envStepsPerSecond);
