@@ -54,7 +54,8 @@ export class SnakeTrainer {
   private priorityBeta = PRIORITY_BETA_START;
   private loss = 0;
   private bestReturn = Number.NEGATIVE_INFINITY;
-  private lastTargetSyncStep = 0;
+  private gradientSteps = 0;
+  private lastTargetSyncGradientStep = 0;
   private stepsPerSecond = 0;
 
   constructor() {
@@ -97,7 +98,8 @@ export class SnakeTrainer {
     this.priorityBeta = PRIORITY_BETA_START;
     this.loss = 0;
     this.bestReturn = Number.NEGATIVE_INFINITY;
-    this.lastTargetSyncStep = 0;
+    this.gradientSteps = 0;
+    this.lastTargetSyncGradientStep = 0;
     this.stepsPerSecond = 0;
   }
 
@@ -254,14 +256,18 @@ export class SnakeTrainer {
       );
       latestLoss = result.loss;
       this.replay.updatePriorities(sample.indices, result.tdErrors);
+      this.gradientSteps += 1;
     }
 
     this.loss =
       this.loss === 0 ? latestLoss : this.loss * 0.97 + latestLoss * 0.03;
 
-    if (this.totalSteps - this.lastTargetSyncStep >= TARGET_UPDATE_STEPS) {
+    if (
+      this.gradientSteps - this.lastTargetSyncGradientStep >=
+      TARGET_UPDATE_STEPS
+    ) {
       this.target.copyWeightsFrom(this.online);
-      this.lastTargetSyncStep = this.totalSteps;
+      this.lastTargetSyncGradientStep = this.gradientSteps;
     }
   }
 

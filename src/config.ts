@@ -27,7 +27,7 @@ export const TURBO_TIME_BUDGET_MS = 12;
 
 export const TRAIN_ENVS = 24;
 export const REPLAY_CAPACITY = 15_000;
-export const TRAIN_START_SIZE = 1_200;
+export const TRAIN_START_SIZE = 5_000;
 export const BATCH_SIZE = 32;
 export const TRAIN_EVERY_STEPS = 2;
 export const GRADIENT_STEPS = 1;
@@ -43,12 +43,12 @@ export const ADAM_EPSILON = 1e-8;
 export const PRIORITY_ALPHA = 0.6;
 export const PRIORITY_BETA_START = 0.4;
 export const PRIORITY_BETA_END = 1;
-export const PRIORITY_BETA_DECAY_STEPS = 500_000;
+export const PRIORITY_BETA_DECAY_STEPS = 2_000_000;
 export const PRIORITY_EPSILON = 1e-3;
 
 export const EPSILON_START = 1;
-export const EPSILON_END = 0.05;
-export const EPSILON_DECAY_STEPS = 150_000;
+export const EPSILON_END = 0.1;
+export const EPSILON_DECAY_STEPS = 2_000_000;
 
 export const REWARD_EAT = 1;
 export const REWARD_COLLISION_DEATH = -1;
