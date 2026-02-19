@@ -1,145 +1,241 @@
-import { POP_SIZE } from "./config";
-import { GeneticAlgorithm } from "./GeneticAlgorithm";
-import { NeuralNetwork } from "./NeuralNetwork";
+import {
+  BATCH_SIZE,
+  EPSILON_DECAY_STEPS,
+  EPSILON_END,
+  EPSILON_START,
+  GRADIENT_STEPS,
+  OUTPUTS,
+  REPLAY_CAPACITY,
+  TARGET_UPDATE_STEPS,
+  TRAIN_ENVS,
+  TRAIN_EVERY_STEPS,
+  TRAIN_START_SIZE,
+  observationSize,
+} from "./config";
+import { argMax, ConvDQN } from "./ConvDQN";
+import { ReplayBuffer } from "./ReplayBuffer";
 import { SnakeEnvironment } from "./SnakeEnvironment";
-import type { Agent, Genome, TrainerState } from "./types";
+import type { Agent, TrainerState, Transition } from "./types";
+
+const HISTORY_LIMIT = 500;
+const AVG_WINDOW = 100;
 
 export class SnakeTrainer {
-  private readonly ga = new GeneticAlgorithm();
-  private readonly network = new NeuralNetwork();
-  private readonly environment = new SnakeEnvironment(this.network);
+  private readonly environment = new SnakeEnvironment();
+  private readonly replay = new ReplayBuffer(REPLAY_CAPACITY);
 
-  private population: Agent[] = [];
-  private generation = 1;
-  private bestEverScore = 0;
-  private bestEverFitness = 0;
-  private bestFitnessGen = 1;
-  private fitnessHistory: number[] = [];
+  private online = new ConvDQN();
+  private target = new ConvDQN();
 
-  private showcaseGenome: Genome | null = null;
-  private showcaseAgent: Agent | null = null;
+  private trainingAgents: Agent[] = [];
+  private trainingStates: Uint8Array[] = [];
+
+  private showcaseAgent: Agent = this.environment.createAgent();
+  private showcaseObservation: Uint8Array = new Uint8Array(observationSize());
+  private showcaseQValues = new Float32Array(OUTPUTS);
+  private showcaseAction = 0;
+
+  private terminalState = new Uint8Array(observationSize());
+  private readonly actionQScratch = new Float32Array(OUTPUTS);
+
+  private rewardHistory: number[] = [];
+  private episodeCount = 0;
+  private totalSteps = 0;
+  private epsilon = EPSILON_START;
+  private loss = 0;
+  private bestReturn = Number.NEGATIVE_INFINITY;
+  private lastTargetSyncStep = 0;
 
   constructor() {
     this.reset();
   }
 
   public reset(): void {
-    this.population = [];
-    this.generation = 1;
-    this.bestEverScore = 0;
-    this.bestEverFitness = 0;
-    this.bestFitnessGen = 1;
-    this.fitnessHistory = [];
-    this.showcaseGenome = null;
-    this.showcaseAgent = null;
+    this.online = new ConvDQN();
+    this.target = new ConvDQN();
+    this.target.copyWeightsFrom(this.online);
 
-    for (let i = 0; i < POP_SIZE; i++) {
-      this.population.push(
-        this.environment.createAgent(this.ga.randomGenome()),
-      );
+    this.replay.clear();
+
+    this.trainingAgents = [];
+    this.trainingStates = [];
+
+    for (let i = 0; i < TRAIN_ENVS; i++) {
+      const agent = this.environment.createAgent();
+      const state = this.environment.observe(agent);
+      this.trainingAgents.push(agent);
+      this.trainingStates.push(state);
     }
 
-    if (this.population.length > 0) {
-      this.setShowcaseGenome(this.population[0].genome);
-    }
+    this.showcaseAgent = this.environment.createAgent();
+    this.showcaseObservation = new Uint8Array(observationSize());
+    this.environment.observe(this.showcaseAgent, this.showcaseObservation);
+    this.online.predict(this.showcaseObservation, this.showcaseQValues);
+    this.showcaseAction = argMax(this.showcaseQValues);
+
+    this.terminalState = new Uint8Array(observationSize());
+
+    this.rewardHistory = [];
+    this.episodeCount = 0;
+    this.totalSteps = 0;
+    this.epsilon = EPSILON_START;
+    this.loss = 0;
+    this.bestReturn = Number.NEGATIVE_INFINITY;
+    this.lastTargetSyncStep = 0;
   }
 
   public simulate(stepCount: number): void {
     for (let i = 0; i < stepCount; i++) {
-      let alive = 0;
-
-      for (const agent of this.population) {
-        if (!agent.alive) {
-          continue;
-        }
-
-        this.environment.step(agent);
-        if (agent.alive) {
-          alive += 1;
-        }
-      }
-
-      if (alive === 0) {
-        this.evolve();
-      }
-
-      if (this.showcaseAgent) {
-        this.environment.step(this.showcaseAgent);
-      }
-
-      if (!this.showcaseAgent?.alive && this.showcaseGenome) {
-        this.showcaseAgent = this.environment.createAgent(this.showcaseGenome);
-      }
+      this.stepTrainingEnvironments();
+      this.trainOnlineNetwork();
+      this.stepShowcase();
+      this.epsilon = this.currentEpsilon(this.totalSteps);
     }
   }
 
   public getState(): TrainerState {
-    let alive = 0;
-    for (const agent of this.population) {
-      if (agent.alive) {
-        alive += 1;
-      }
-    }
-
-    const boardAgent = this.showcaseAgent ?? this.population[0];
-    const network = this.showcaseGenome
-      ? {
-          genome: this.showcaseGenome,
-          activations: this.environment.computeNetworkActivations(
-            this.showcaseGenome,
-            this.showcaseAgent,
-          ),
-        }
-      : { genome: null, activations: null };
+    const avgReturn = this.averageReturn();
 
     return {
-      boardAgent,
-      fitnessHistory: this.fitnessHistory,
-      generation: this.generation,
-      alive,
-      populationSize: POP_SIZE,
-      bestEverScore: this.bestEverScore,
-      bestEverFitness: this.bestEverFitness,
-      staleGenerations: Math.max(0, this.generation - this.bestFitnessGen),
-      network,
+      boardAgent: this.showcaseAgent,
+      rewardHistory: this.rewardHistory,
+      episodeCount: this.episodeCount,
+      totalSteps: this.totalSteps,
+      epsilon: this.epsilon,
+      replaySize: this.replay.size,
+      avgReturn,
+      bestReturn:
+        this.bestReturn === Number.NEGATIVE_INFINITY ? 0 : this.bestReturn,
+      loss: this.loss,
+      network: {
+        observation: this.showcaseObservation,
+        qValues: this.showcaseQValues,
+        action: this.showcaseAction,
+      },
     };
   }
 
   public onGridSizeChanged(): void {
-    this.population = this.population.map((agent) =>
-      this.environment.createAgent(agent.genome),
-    );
+    this.reset();
+  }
 
-    if (this.showcaseGenome) {
-      this.showcaseAgent = this.environment.createAgent(this.showcaseGenome);
-    } else {
-      this.showcaseAgent = null;
+  private stepTrainingEnvironments(): void {
+    for (let i = 0; i < this.trainingAgents.length; i++) {
+      const agent = this.trainingAgents[i];
+      const state = this.trainingStates[i];
+
+      const action = this.selectAction(state, true);
+      const result = this.environment.step(agent, action);
+      agent.episodeReturn += result.reward;
+
+      const nextState = result.done
+        ? this.terminalState
+        : this.environment.observe(agent);
+
+      const transition: Transition = {
+        state,
+        action,
+        reward: result.reward,
+        nextState,
+        done: result.done,
+      };
+      this.replay.push(transition);
+      this.totalSteps += 1;
+
+      if (result.done) {
+        this.recordEpisodeReturn(agent.episodeReturn);
+        this.episodeCount += 1;
+        this.environment.resetAgent(agent);
+        this.trainingStates[i] = this.environment.observe(agent);
+      } else {
+        this.trainingStates[i] = nextState;
+      }
     }
   }
 
-  private setShowcaseGenome(genome: Genome): void {
-    this.showcaseGenome = new Float32Array(genome);
-    this.showcaseAgent = this.environment.createAgent(this.showcaseGenome);
+  private trainOnlineNetwork(): void {
+    if (this.replay.size < TRAIN_START_SIZE) {
+      return;
+    }
+
+    if (this.totalSteps % TRAIN_EVERY_STEPS !== 0) {
+      return;
+    }
+
+    let latestLoss = this.loss;
+
+    for (let i = 0; i < GRADIENT_STEPS; i++) {
+      const batch = this.replay.sample(BATCH_SIZE);
+      if (batch.length === 0) {
+        break;
+      }
+      latestLoss = this.online.trainBatch(batch, this.target);
+    }
+
+    this.loss = this.loss === 0 ? latestLoss : this.loss * 0.97 + latestLoss * 0.03;
+
+    if (this.totalSteps - this.lastTargetSyncStep >= TARGET_UPDATE_STEPS) {
+      this.target.copyWeightsFrom(this.online);
+      this.lastTargetSyncStep = this.totalSteps;
+    }
   }
 
-  private evolve(): void {
-    const { best, nextGenomes } = this.ga.evolve(this.population);
-
-    this.bestEverScore = Math.max(this.bestEverScore, best.score);
-    if (this.generation === 1 || best.fitness > this.bestEverFitness) {
-      this.bestEverFitness = best.fitness;
-      this.bestFitnessGen = this.generation;
-      this.setShowcaseGenome(best.genome);
+  private stepShowcase(): void {
+    if (!this.showcaseAgent.alive) {
+      this.environment.resetAgent(this.showcaseAgent);
     }
 
-    this.fitnessHistory.push(best.fitness);
-    if (this.fitnessHistory.length > 500) {
-      this.fitnessHistory.shift();
+    this.environment.observe(this.showcaseAgent, this.showcaseObservation);
+    this.online.predict(this.showcaseObservation, this.showcaseQValues);
+    const action = argMax(this.showcaseQValues);
+    this.environment.step(this.showcaseAgent, action);
+
+    if (!this.showcaseAgent.alive) {
+      this.environment.resetAgent(this.showcaseAgent);
     }
 
-    this.population = nextGenomes.map((genome) =>
-      this.environment.createAgent(genome),
-    );
-    this.generation += 1;
+    this.environment.observe(this.showcaseAgent, this.showcaseObservation);
+    this.online.predict(this.showcaseObservation, this.showcaseQValues);
+    this.showcaseAction = argMax(this.showcaseQValues);
+  }
+
+  private selectAction(state: Uint8Array, explore: boolean): number {
+    if (explore && Math.random() < this.epsilon) {
+      return Math.floor(Math.random() * OUTPUTS);
+    }
+
+    this.online.predict(state, this.actionQScratch);
+    return argMax(this.actionQScratch);
+  }
+
+  private recordEpisodeReturn(value: number): void {
+    this.rewardHistory.push(value);
+    if (this.rewardHistory.length > HISTORY_LIMIT) {
+      this.rewardHistory.shift();
+    }
+
+    if (value > this.bestReturn) {
+      this.bestReturn = value;
+    }
+  }
+
+  private averageReturn(): number {
+    if (this.rewardHistory.length === 0) {
+      return 0;
+    }
+
+    const windowSize = Math.min(AVG_WINDOW, this.rewardHistory.length);
+    let sum = 0;
+
+    for (let i = this.rewardHistory.length - windowSize; i < this.rewardHistory.length; i++) {
+      sum += this.rewardHistory[i];
+    }
+
+    return sum / windowSize;
+  }
+
+  private currentEpsilon(steps: number): number {
+    const progress = Math.min(1, steps / EPSILON_DECAY_STEPS);
+    return EPSILON_START + (EPSILON_END - EPSILON_START) * progress;
   }
 }

@@ -15,5 +15,8 @@
     "gh-pages": "^6.3.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0"
   }
 }

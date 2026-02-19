@@ -1,9 +1,6 @@
 export type Point = { x: number; y: number };
 
-export type Genome = Float32Array;
-
 export type Agent = {
-  genome: Genome;
   body: Point[];
   dir: number;
   food: Point;
@@ -11,27 +8,32 @@ export type Agent = {
   score: number;
   steps: number;
   hunger: number;
-  fitness: number;
+  episodeReturn: number;
 };
 
-export type NetworkActivations = {
-  input: Float32Array;
-  hidden: Float32Array[];
-  output: Float32Array;
-  best: number;
+export type Transition = {
+  state: Uint8Array;
+  action: number;
+  reward: number;
+  nextState: Uint8Array;
+  done: boolean;
+};
+
+export type NetworkState = {
+  observation: Uint8Array | null;
+  qValues: Float32Array | null;
+  action: number;
 };
 
 export type TrainerState = {
   boardAgent: Agent;
-  fitnessHistory: readonly number[];
-  generation: number;
-  alive: number;
-  populationSize: number;
-  bestEverScore: number;
-  bestEverFitness: number;
-  staleGenerations: number;
-  network: {
-    genome: Genome | null;
-    activations: NetworkActivations | null;
-  };
+  rewardHistory: readonly number[];
+  episodeCount: number;
+  totalSteps: number;
+  epsilon: number;
+  replaySize: number;
+  avgReturn: number;
+  bestReturn: number;
+  loss: number;
+  network: NetworkState;
 };
