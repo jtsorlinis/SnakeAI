@@ -3,7 +3,6 @@ import {
   ADAM_BETA1,
   ADAM_BETA2,
   ADAM_EPSILON,
-  GAMMA,
   GRID_SIZE,
   LEARNING_RATE,
   OBS_CHANNELS,
@@ -17,6 +16,11 @@ const CONV2_FILTERS = 24;
 const HIDDEN_UNITS = 96;
 
 let backendInitPromise: Promise<void> | null = null;
+
+export type TrainBatchResult = {
+  loss: number;
+  tdErrors: Float32Array;
+};
 
 function argMax(values: ArrayLike<number>): number {
   let bestIndex = 0;
@@ -57,59 +61,87 @@ export async function ensureTfjsBackend(): Promise<void> {
   await backendInitPromise;
 }
 
-function createModel(gridSize: number): tf.Sequential {
-  const model = tf.sequential();
+function createModel(gridSize: number): tf.LayersModel {
+  const input = tf.input({ shape: [gridSize, gridSize, OBS_CHANNELS] });
 
-  model.add(
-    tf.layers.conv2d({
-      inputShape: [gridSize, gridSize, OBS_CHANNELS],
+  const conv1 = tf.layers
+    .conv2d({
       filters: CONV1_FILTERS,
       kernelSize: KERNEL_SIZE,
       padding: "same",
       activation: "relu",
       kernelInitializer: "heNormal",
       biasInitializer: "zeros",
-    }),
-  );
+    })
+    .apply(input) as tf.SymbolicTensor;
 
-  model.add(
-    tf.layers.conv2d({
+  const conv2 = tf.layers
+    .conv2d({
       filters: CONV2_FILTERS,
       kernelSize: KERNEL_SIZE,
       padding: "same",
       activation: "relu",
       kernelInitializer: "heNormal",
       biasInitializer: "zeros",
-    }),
-  );
+    })
+    .apply(conv1) as tf.SymbolicTensor;
 
-  model.add(tf.layers.flatten());
+  const flat = tf.layers.flatten().apply(conv2) as tf.SymbolicTensor;
 
-  model.add(
-    tf.layers.dense({
+  const valueHidden = tf.layers
+    .dense({
       units: HIDDEN_UNITS,
       activation: "relu",
       kernelInitializer: "heNormal",
       biasInitializer: "zeros",
-    }),
-  );
+    })
+    .apply(flat) as tf.SymbolicTensor;
 
-  model.add(
-    tf.layers.dense({
+  const advantageHidden = tf.layers
+    .dense({
+      units: HIDDEN_UNITS,
+      activation: "relu",
+      kernelInitializer: "heNormal",
+      biasInitializer: "zeros",
+    })
+    .apply(flat) as tf.SymbolicTensor;
+
+  const value = tf.layers
+    .dense({
+      units: 1,
+      activation: "linear",
+      kernelInitializer: "heNormal",
+      biasInitializer: "zeros",
+    })
+    .apply(valueHidden) as tf.SymbolicTensor;
+
+  const advantage = tf.layers
+    .dense({
       units: OUTPUTS,
       activation: "linear",
       kernelInitializer: "heNormal",
       biasInitializer: "zeros",
-    }),
-  );
+    })
+    .apply(advantageHidden) as tf.SymbolicTensor;
 
-  return model;
+  return tf.model({
+    inputs: input,
+    outputs: [value, advantage],
+  });
+}
+
+function combineDuelingHeads(
+  value: tf.Tensor2D,
+  advantage: tf.Tensor2D,
+): tf.Tensor2D {
+  const centeredAdvantage = advantage.sub(advantage.mean(1, true));
+  return value.add(centeredAdvantage);
 }
 
 export class ConvDQN {
   private readonly width: number;
   private readonly area: number;
-  private readonly model: tf.Sequential;
+  private readonly model: tf.LayersModel;
   private readonly optimizer: tf.Optimizer;
   private readonly singleInputScratch: Float32Array;
 
@@ -147,7 +179,7 @@ export class ConvDQN {
         this.width,
         OBS_CHANNELS,
       ]);
-      const qTensor = this.model.predict(state) as tf.Tensor2D;
+      const qTensor = this.predictQ(state, false);
       target.set(qTensor.dataSync());
     });
 
@@ -156,10 +188,12 @@ export class ConvDQN {
 
   public trainBatch(
     batch: readonly Transition[],
+    importanceWeights: Float32Array,
     targetNetwork: ConvDQN,
-  ): number {
+    bootstrapDiscount: number,
+  ): TrainBatchResult {
     if (batch.length === 0) {
-      return 0;
+      return { loss: 0, tdErrors: new Float32Array(0) };
     }
 
     const batchSize = batch.length;
@@ -169,6 +203,7 @@ export class ConvDQN {
     const actionsData = new Int32Array(batchSize);
     const rewardsData = new Float32Array(batchSize);
     const donesData = new Float32Array(batchSize);
+    const weightsData = new Float32Array(batchSize);
 
     for (let i = 0; i < batchSize; i++) {
       const transition = batch[i];
@@ -180,6 +215,7 @@ export class ConvDQN {
       actionsData[i] = transition.action;
       rewardsData[i] = transition.reward;
       donesData[i] = transition.done ? 1 : 0;
+      weightsData[i] = importanceWeights[i] ?? 1;
     }
 
     return tf.tidy(() => {
@@ -195,40 +231,62 @@ export class ConvDQN {
       const actionsTensor = tf.tensor1d(actionsData, "int32");
       const rewardsTensor = tf.tensor1d(rewardsData, "float32");
       const donesTensor = tf.tensor1d(donesData, "float32");
+      const weightsTensor = tf.tensor1d(weightsData, "float32");
+      const discountTensor = tf.scalar(bootstrapDiscount, "float32");
 
-      const nextOnlineQ = this.model.predict(nextStatesTensor) as tf.Tensor2D;
+      const nextOnlineQ = this.predictQ(nextStatesTensor, false);
       const bestNextActions = nextOnlineQ.argMax(1);
-      const nextTargetQ = targetNetwork.model.predict(
-        nextStatesTensor,
-      ) as tf.Tensor2D;
+      const nextTargetQ = targetNetwork.predictQ(nextStatesTensor, false);
       const nextActionMask = tf
         .oneHot(bestNextActions, OUTPUTS)
         .asType("float32");
       const nextChosenQ = nextTargetQ.mul(nextActionMask).sum(1);
       const targetValues = rewardsTensor.add(
-        tf.onesLike(donesTensor).sub(donesTensor).mul(GAMMA).mul(nextChosenQ),
+        tf.onesLike(donesTensor)
+          .sub(donesTensor)
+          .mul(discountTensor)
+          .mul(nextChosenQ),
       );
 
+      const currentQ = this.predictQ(statesTensor, false);
+      const actionMask = tf.oneHot(actionsTensor, OUTPUTS).asType("float32");
+      const predictedQ = currentQ.mul(actionMask).sum(1);
+      const tdError = targetValues.sub(predictedQ);
+      const tdErrorsArray = tdError.abs().dataSync();
+
       const lossTensor = this.optimizer.minimize(() => {
-        const qValues = this.model.apply(statesTensor, {
-          training: true,
-        }) as tf.Tensor2D;
-        const actionMask = tf.oneHot(actionsTensor, OUTPUTS).asType("float32");
-        const predictedQ = qValues.mul(actionMask).sum(1);
-        const error = predictedQ.sub(targetValues);
+        const qValues = this.predictQ(statesTensor, true);
+        const predicted = qValues.mul(actionMask).sum(1);
+        const error = predicted.sub(targetValues);
         const absError = error.abs();
         const quadratic = absError.clipByValue(0, 1);
         const linear = absError.sub(quadratic);
-        return quadratic.square().mul(0.5).add(linear).mean();
+        const huber = quadratic.square().mul(0.5).add(linear);
+        return huber.mul(weightsTensor).mean();
       }, true);
 
-      return (lossTensor as tf.Scalar).dataSync()[0];
+      const loss = lossTensor ? lossTensor.dataSync()[0] : 0;
+      return {
+        loss,
+        tdErrors: new Float32Array(tdErrorsArray),
+      };
     });
   }
 
   public dispose(): void {
     this.model.dispose();
     this.optimizer.dispose();
+  }
+
+  private predictQ(input: tf.Tensor4D, training: boolean): tf.Tensor2D {
+    const outputs = this.model.apply(input, { training });
+    if (!Array.isArray(outputs) || outputs.length !== 2) {
+      throw new Error("Dueling model must output [value, advantage]");
+    }
+
+    const value = outputs[0] as tf.Tensor2D;
+    const advantage = outputs[1] as tf.Tensor2D;
+    return combineDuelingHeads(value, advantage);
   }
 
   private writeObservationToNhwc(

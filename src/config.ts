@@ -32,12 +32,19 @@ export const BATCH_SIZE = 32;
 export const TRAIN_EVERY_STEPS = 2;
 export const GRADIENT_STEPS = 1;
 export const TARGET_UPDATE_STEPS = 1_000;
+export const N_STEP_RETURNS = 3;
 
 export const GAMMA = 0.99;
 export const LEARNING_RATE = 0.0005;
 export const ADAM_BETA1 = 0.9;
 export const ADAM_BETA2 = 0.999;
 export const ADAM_EPSILON = 1e-8;
+
+export const PRIORITY_ALPHA = 0.6;
+export const PRIORITY_BETA_START = 0.4;
+export const PRIORITY_BETA_END = 1;
+export const PRIORITY_BETA_DECAY_STEPS = 500_000;
+export const PRIORITY_EPSILON = 1e-3;
 
 export const EPSILON_START = 1;
 export const EPSILON_END = 0.05;

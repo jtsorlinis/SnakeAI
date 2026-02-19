@@ -31,6 +31,7 @@ export type TrainerState = {
   episodeCount: number;
   totalSteps: number;
   epsilon: number;
+  priorityBeta: number;
   replaySize: number;
   stepsPerSecond: number;
   avgReturn: number;

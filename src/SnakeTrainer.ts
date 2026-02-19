@@ -3,8 +3,13 @@ import {
   EPSILON_DECAY_STEPS,
   EPSILON_END,
   EPSILON_START,
+  GAMMA,
   GRADIENT_STEPS,
+  N_STEP_RETURNS,
   OUTPUTS,
+  PRIORITY_BETA_DECAY_STEPS,
+  PRIORITY_BETA_END,
+  PRIORITY_BETA_START,
   REPLAY_CAPACITY,
   TARGET_UPDATE_STEPS,
   TRAIN_ENVS,
@@ -17,18 +22,22 @@ import { ReplayBuffer } from "./ReplayBuffer";
 import { SnakeEnvironment } from "./SnakeEnvironment";
 import type { Agent, TrainerState, Transition } from "./types";
 
-const HISTORY_LIMIT = 500;
+const HISTORY_LIMIT = 1000;
 const AVG_WINDOW = 100;
+
+type NStepEntry = Transition;
 
 export class SnakeTrainer {
   private readonly environment = new SnakeEnvironment();
   private readonly replay = new ReplayBuffer(REPLAY_CAPACITY);
+  private readonly nStepDiscount = Math.pow(GAMMA, N_STEP_RETURNS);
 
   private online = new ConvDQN();
   private target = new ConvDQN();
 
   private trainingAgents: Agent[] = [];
   private trainingStates: Uint8Array[] = [];
+  private nStepQueues: NStepEntry[][] = [];
 
   private showcaseAgent: Agent = this.environment.createAgent();
   private showcaseObservation: Uint8Array = new Uint8Array(observationSize());
@@ -42,6 +51,7 @@ export class SnakeTrainer {
   private episodeCount = 0;
   private totalSteps = 0;
   private epsilon = EPSILON_START;
+  private priorityBeta = PRIORITY_BETA_START;
   private loss = 0;
   private bestReturn = Number.NEGATIVE_INFINITY;
   private lastTargetSyncStep = 0;
@@ -62,12 +72,14 @@ export class SnakeTrainer {
 
     this.trainingAgents = [];
     this.trainingStates = [];
+    this.nStepQueues = [];
 
     for (let i = 0; i < TRAIN_ENVS; i++) {
       const agent = this.environment.createAgent();
       const state = this.environment.observe(agent);
       this.trainingAgents.push(agent);
       this.trainingStates.push(state);
+      this.nStepQueues.push([]);
     }
 
     this.showcaseAgent = this.environment.createAgent();
@@ -82,6 +94,7 @@ export class SnakeTrainer {
     this.episodeCount = 0;
     this.totalSteps = 0;
     this.epsilon = EPSILON_START;
+    this.priorityBeta = PRIORITY_BETA_START;
     this.loss = 0;
     this.bestReturn = Number.NEGATIVE_INFINITY;
     this.lastTargetSyncStep = 0;
@@ -94,6 +107,7 @@ export class SnakeTrainer {
       this.trainOnlineNetwork();
       this.stepShowcase();
       this.epsilon = this.currentEpsilon(this.totalSteps);
+      this.priorityBeta = this.currentPriorityBeta(this.totalSteps);
     }
   }
 
@@ -106,6 +120,7 @@ export class SnakeTrainer {
       episodeCount: this.episodeCount,
       totalSteps: this.totalSteps,
       epsilon: this.epsilon,
+      priorityBeta: this.priorityBeta,
       replaySize: this.replay.size,
       stepsPerSecond: this.stepsPerSecond,
       avgReturn,
@@ -141,14 +156,14 @@ export class SnakeTrainer {
         ? this.terminalState
         : this.environment.observe(agent);
 
-      const transition: Transition = {
+      this.nStepQueues[i].push({
         state,
         action,
         reward: result.reward,
         nextState,
         done: result.done,
-      };
-      this.replay.push(transition);
+      });
+      this.flushNStepQueue(this.nStepQueues[i]);
       this.totalSteps += 1;
 
       if (result.done) {
@@ -159,6 +174,43 @@ export class SnakeTrainer {
       } else {
         this.trainingStates[i] = nextState;
       }
+    }
+  }
+
+  private flushNStepQueue(queue: NStepEntry[]): void {
+    while (queue.length > 0) {
+      const queueEndsWithDone = queue[queue.length - 1].done;
+      if (!queueEndsWithDone && queue.length < N_STEP_RETURNS) {
+        return;
+      }
+
+      let reward = 0;
+      let discount = 1;
+      let nextState = queue[0].nextState;
+      let done = false;
+      const steps = Math.min(N_STEP_RETURNS, queue.length);
+
+      for (let i = 0; i < steps; i++) {
+        const transition = queue[i];
+        reward += discount * transition.reward;
+        discount *= GAMMA;
+        nextState = transition.nextState;
+        done = transition.done;
+        if (done) {
+          break;
+        }
+      }
+
+      const first = queue[0];
+      this.replay.push({
+        state: first.state,
+        action: first.action,
+        reward,
+        nextState,
+        done,
+      });
+
+      queue.shift();
     }
   }
 
@@ -183,14 +235,23 @@ export class SnakeTrainer {
     let latestLoss = this.loss;
 
     for (let i = 0; i < GRADIENT_STEPS; i++) {
-      const batch = this.replay.sample(BATCH_SIZE);
-      if (batch.length === 0) {
+      const sample = this.replay.sample(BATCH_SIZE, this.priorityBeta);
+      if (sample.transitions.length === 0) {
         break;
       }
-      latestLoss = this.online.trainBatch(batch, this.target);
+
+      const result = this.online.trainBatch(
+        sample.transitions,
+        sample.weights,
+        this.target,
+        this.nStepDiscount,
+      );
+      latestLoss = result.loss;
+      this.replay.updatePriorities(sample.indices, result.tdErrors);
     }
 
-    this.loss = this.loss === 0 ? latestLoss : this.loss * 0.97 + latestLoss * 0.03;
+    this.loss =
+      this.loss === 0 ? latestLoss : this.loss * 0.97 + latestLoss * 0.03;
 
     if (this.totalSteps - this.lastTargetSyncStep >= TARGET_UPDATE_STEPS) {
       this.target.copyWeightsFrom(this.online);
@@ -236,7 +297,11 @@ export class SnakeTrainer {
     const windowSize = Math.min(AVG_WINDOW, this.rewardHistory.length);
     let sum = 0;
 
-    for (let i = this.rewardHistory.length - windowSize; i < this.rewardHistory.length; i++) {
+    for (
+      let i = this.rewardHistory.length - windowSize;
+      i < this.rewardHistory.length;
+      i++
+    ) {
       sum += this.rewardHistory[i];
     }
 
@@ -246,5 +311,13 @@ export class SnakeTrainer {
   private currentEpsilon(steps: number): number {
     const progress = Math.min(1, steps / EPSILON_DECAY_STEPS);
     return EPSILON_START + (EPSILON_END - EPSILON_START) * progress;
+  }
+
+  private currentPriorityBeta(steps: number): number {
+    const progress = Math.min(1, steps / PRIORITY_BETA_DECAY_STEPS);
+    return (
+      PRIORITY_BETA_START +
+      (PRIORITY_BETA_END - PRIORITY_BETA_START) * progress
+    );
   }
 }

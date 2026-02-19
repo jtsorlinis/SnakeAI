@@ -290,6 +290,7 @@ export class SnakeRenderer {
       `Env steps/s: ${state.stepsPerSecond.toFixed(0)}`,
       `Grid: ${GRID_SIZE}x${GRID_SIZE}`,
       `Epsilon: ${state.epsilon.toFixed(3)}`,
+      `PER beta: ${state.priorityBeta.toFixed(3)}`,
       `Replay size: ${state.replaySize.toLocaleString()}`,
       `Avg return (last 100): ${state.avgReturn.toFixed(3)}`,
       `Best return: ${state.bestReturn.toFixed(3)}`,
