@@ -4,8 +4,6 @@ import {
   NEAT_ADD_CONNECTION_RATE,
   NEAT_ADD_NODE_RATE,
   NEAT_BIAS_MUTATION_RATE,
-  NEAT_COMPLEXITY_CONNECTION_PENALTY,
-  NEAT_COMPLEXITY_NODE_PENALTY,
   NEAT_COMPATIBILITY_GENE_COEFF,
   NEAT_COMPATIBILITY_THRESHOLD,
   NEAT_COMPATIBILITY_WEIGHT_COEFF,
@@ -130,19 +128,8 @@ export class NeatAlgorithm {
     const foodReward = agent.score;
     const deathPenalty = !agent.alive && agent.hunger > 0 ? 1 : 0;
     const stepPenalty = agent.steps / (GRID_SIZE * GRID_SIZE);
-    const hiddenNodeCount = agent.genome.nodes.reduce(
-      (count, node) => count + (node.type === "hidden" ? 1 : 0),
-      0,
-    );
-    const enabledConnectionCount = agent.genome.connections.reduce(
-      (count, connection) => count + (connection.enabled ? 1 : 0),
-      0,
-    );
-    const complexityPenalty =
-      hiddenNodeCount * NEAT_COMPLEXITY_NODE_PENALTY +
-      enabledConnectionCount * NEAT_COMPLEXITY_CONNECTION_PENALTY;
 
-    return foodReward - deathPenalty - stepPenalty - complexityPenalty;
+    return foodReward - deathPenalty - stepPenalty;
   }
 
   private speciate(population: Agent[]): Species[] {

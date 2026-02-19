@@ -28,14 +28,12 @@ export const NEAT_ADD_NODE_RATE = 0.02;
 export const NEAT_DISABLE_INHERITED_GENE_RATE = 0.9;
 export const NEAT_SURVIVAL_RATIO = 0.25;
 export const NEAT_MAX_NODES = 24;
-export const NEAT_COMPLEXITY_NODE_PENALTY = 0.12;
-export const NEAT_COMPLEXITY_CONNECTION_PENALTY = 0.008;
 export let BASE_HUNGER = 0;
 
 export const NORMAL_STEPS_PER_SECOND = 30;
 export const TURBO_TIME_BUDGET_MS = 12;
 
-export const INPUTS = 10;
+export const INPUTS = 8;
 export const OUTPUTS = 3;
 
 function recalculateGridConfig(): void {
@@ -65,13 +63,11 @@ export const NET_HOVER_RADIUS = 8;
 
 export const INPUT_LABELS = [
   "Block Ahead",
-  "Block Left",
-  "Block Right",
+  "Block Side",
   "Tail Ahead",
-  "Tail Left",
-  "Tail Right",
-  "Food Fwd/Back",
-  "Food Left/Right",
+  "Tail Side",
+  "Food Ahead",
+  "Food Side",
   "Dir X",
   "Dir Y",
 ] as const;
