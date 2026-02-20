@@ -28,7 +28,7 @@ export const OBS_LABELS = [
 ] as const;
 export const OUTPUT_LABELS = ["Straight", "Turn left", "Turn right"] as const;
 
-export const NORMAL_STEPS_PER_SECOND = 30;
+export const NORMAL_STEPS_PER_SECOND = 15;
 export const TURBO_TIME_BUDGET_MS = 12;
 
 export const TRAIN_ENVS = 24;
