@@ -19,6 +19,8 @@ type RendererElements = {
   statsElement: HTMLElement;
 };
 
+const CHART_EMA_WINDOW = 20;
+
 export class SnakeRenderer {
   private readonly net: HTMLCanvasElement;
   private readonly netCtx: CanvasRenderingContext2D;
@@ -271,10 +273,12 @@ export class SnakeRenderer {
       return;
     }
 
+    const smoothed = this.computeSmoothedHistory(history);
+
     let minValue = Number.POSITIVE_INFINITY;
     let maxValue = Number.NEGATIVE_INFINITY;
 
-    for (const value of history) {
+    for (const value of smoothed) {
       if (value < minValue) {
         minValue = value;
       }
@@ -296,9 +300,9 @@ export class SnakeRenderer {
     this.chartCtx.lineWidth = 2;
     this.chartCtx.beginPath();
 
-    for (let i = 0; i < history.length; i++) {
-      const x = 10 + (i / (history.length - 1)) * (CHART_WIDTH - 20);
-      const normalized = (history[i] - minValue) / (maxValue - minValue);
+    for (let i = 0; i < smoothed.length; i++) {
+      const x = 10 + (i / (smoothed.length - 1)) * (CHART_WIDTH - 20);
+      const normalized = (smoothed[i] - minValue) / (maxValue - minValue);
       const y = CHART_HEIGHT - 10 - normalized * (CHART_HEIGHT - 20);
 
       if (i === 0) {
@@ -313,10 +317,24 @@ export class SnakeRenderer {
     this.chartCtx.fillStyle = "rgba(255, 255, 255, 0.75)";
     this.chartCtx.font = "12px IBM Plex Mono, monospace";
     this.chartCtx.fillText(
-      `Episode return (min ${minValue.toFixed(2)}, max ${maxValue.toFixed(2)})`,
+      `Episode return EMA(${CHART_EMA_WINDOW})`,
       10,
       16,
     );
+  }
+
+  private computeSmoothedHistory(history: readonly number[]): number[] {
+    const alpha = 2 / (CHART_EMA_WINDOW + 1);
+    const smoothed = new Array<number>(history.length);
+    let ema = history[0];
+    smoothed[0] = ema;
+
+    for (let i = 1; i < history.length; i++) {
+      ema = alpha * history[i] + (1 - alpha) * ema;
+      smoothed[i] = ema;
+    }
+
+    return smoothed;
   }
 
   private updateStats(state: TrainerState): void {
