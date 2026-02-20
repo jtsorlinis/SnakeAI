@@ -9,13 +9,10 @@ import {
   OUTPUTS,
 } from "./config";
 
-const MODEL_GRID_SIZE = 10;
 const KERNEL_SIZE = 3;
-const SPACE_TO_DEPTH_BLOCK = 2;
 const STEM_FILTERS = 32;
 const TRUNK_FILTERS = 32;
-const STANDARD_RESIDUAL_BLOCKS = 5;
-const BOTTLENECK_FILTERS = 8;
+const RESIDUAL_BLOCKS = 5;
 const HEAD_HIDDEN_UNITS = 256;
 const LOG_EPSILON = 1e-8;
 
@@ -95,21 +92,6 @@ function residualBlock(
 }
 
 function createModel(gridSize: number): tf.LayersModel {
-  if (gridSize !== MODEL_GRID_SIZE) {
-    throw new Error(
-      `Model is fixed to ${MODEL_GRID_SIZE}x${MODEL_GRID_SIZE}. Received ${gridSize}x${gridSize}.`,
-    );
-  }
-
-  if (gridSize % SPACE_TO_DEPTH_BLOCK !== 0) {
-    throw new Error(
-      `Grid size ${gridSize} must be divisible by ${SPACE_TO_DEPTH_BLOCK} for space-to-depth.`,
-    );
-  }
-
-  const reducedSize = gridSize / SPACE_TO_DEPTH_BLOCK;
-  const s2dChannels = STEM_FILTERS * SPACE_TO_DEPTH_BLOCK * SPACE_TO_DEPTH_BLOCK;
-
   const input = tf.input({ shape: [gridSize, gridSize, OBS_CHANNELS] });
 
   let trunk = tf.layers
@@ -124,64 +106,25 @@ function createModel(gridSize: number): tf.LayersModel {
     })
     .apply(input) as tf.SymbolicTensor;
 
-  trunk = tf.layers
-    .reshape({
-      targetShape: [
-        reducedSize,
-        SPACE_TO_DEPTH_BLOCK,
-        reducedSize,
-        SPACE_TO_DEPTH_BLOCK,
-        STEM_FILTERS,
-      ],
-      name: "s2d_reshape_1",
-    })
-    .apply(trunk) as tf.SymbolicTensor;
-
-  trunk = tf.layers
-    .permute({
-      dims: [1, 3, 2, 4, 5],
-      name: "s2d_permute",
-    })
-    .apply(trunk) as tf.SymbolicTensor;
-
-  trunk = tf.layers
-    .reshape({
-      targetShape: [reducedSize, reducedSize, s2dChannels],
-      name: "s2d_reshape_2",
-    })
-    .apply(trunk) as tf.SymbolicTensor;
+  for (let i = 0; i < RESIDUAL_BLOCKS; i++) {
+    trunk = residualBlock(trunk, STEM_FILTERS, `res_${i}`);
+  }
 
   trunk = tf.layers
     .conv2d({
       filters: TRUNK_FILTERS,
-      kernelSize: 1,
+      kernelSize: KERNEL_SIZE,
       padding: "same",
       activation: "relu",
       kernelInitializer: "heNormal",
       biasInitializer: "zeros",
-      name: "compress_conv",
-    })
-    .apply(trunk) as tf.SymbolicTensor;
-
-  for (let i = 0; i < STANDARD_RESIDUAL_BLOCKS; i++) {
-    trunk = residualBlock(trunk, TRUNK_FILTERS, `res_${i}`);
-  }
-
-  const compressed = tf.layers
-    .conv2d({
-      filters: BOTTLENECK_FILTERS,
-      kernelSize: 1,
-      padding: "same",
-      activation: "relu",
-      kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
-      name: "pre_flatten_compress",
+      name: "trunk_conv",
     })
     .apply(trunk) as tf.SymbolicTensor;
 
   const flattened = tf.layers
     .flatten({ name: "flatten_features" })
-    .apply(compressed) as tf.SymbolicTensor;
+    .apply(trunk) as tf.SymbolicTensor;
 
   const policyHidden = tf.layers
     .dense({
