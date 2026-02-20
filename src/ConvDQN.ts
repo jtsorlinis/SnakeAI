@@ -119,8 +119,8 @@ function createModel(gridSize: number): tf.LayersModel {
     })
     .apply(trunk) as tf.SymbolicTensor;
 
-  const pooled = tf.layers
-    .globalAveragePooling2d({ name: "global_avg_pool" })
+  const flattened = tf.layers
+    .flatten({ name: "flatten_features" })
     .apply(trunk) as tf.SymbolicTensor;
 
   const policyHidden = tf.layers
@@ -131,7 +131,7 @@ function createModel(gridSize: number): tf.LayersModel {
       biasInitializer: "zeros",
       name: "policy_hidden",
     })
-    .apply(pooled) as tf.SymbolicTensor;
+    .apply(flattened) as tf.SymbolicTensor;
 
   const valueHidden = tf.layers
     .dense({
@@ -141,7 +141,7 @@ function createModel(gridSize: number): tf.LayersModel {
       biasInitializer: "zeros",
       name: "value_hidden",
     })
-    .apply(pooled) as tf.SymbolicTensor;
+    .apply(flattened) as tf.SymbolicTensor;
 
   const policyLogits = tf.layers
     .dense({
@@ -169,7 +169,10 @@ function createModel(gridSize: number): tf.LayersModel {
   });
 }
 
-function softmax(logits: ArrayLike<number>, target: Float32Array): Float32Array {
+function softmax(
+  logits: ArrayLike<number>,
+  target: Float32Array,
+): Float32Array {
   let max = Number.NEGATIVE_INFINITY;
   for (let i = 0; i < logits.length; i++) {
     max = Math.max(max, logits[i]);
@@ -307,7 +310,10 @@ export class ConvDQN {
         this.width,
         OBS_CHANNELS,
       ]);
-      const [policyLogits, valueTensor] = this.predictPolicyAndValue(state, false);
+      const [policyLogits, valueTensor] = this.predictPolicyAndValue(
+        state,
+        false,
+      );
       logitsTarget.set(policyLogits.dataSync());
       value = valueTensor.dataSync()[0];
     });
@@ -364,7 +370,10 @@ export class ConvDQN {
       const returnsTensor = tf.tensor1d(inputs.returns, "float32");
 
       const optimizedLoss = this.optimizer.minimize(() => {
-        const [policyLogits, values] = this.predictPolicyAndValue(statesTensor, true);
+        const [policyLogits, values] = this.predictPolicyAndValue(
+          statesTensor,
+          true,
+        );
         const terms = this.computeLossTerms(
           policyLogits,
           values,
@@ -379,7 +388,10 @@ export class ConvDQN {
         return terms.totalLoss;
       }, true);
 
-      const [policyLogits, values] = this.predictPolicyAndValue(statesTensor, false);
+      const [policyLogits, values] = this.predictPolicyAndValue(
+        statesTensor,
+        false,
+      );
       const terms = this.computeLossTerms(
         policyLogits,
         values,
@@ -393,7 +405,9 @@ export class ConvDQN {
       );
 
       return {
-        totalLoss: optimizedLoss ? optimizedLoss.dataSync()[0] : terms.totalLoss.dataSync()[0],
+        totalLoss: optimizedLoss
+          ? optimizedLoss.dataSync()[0]
+          : terms.totalLoss.dataSync()[0],
         policyLoss: terms.policyLoss.dataSync()[0],
         valueLoss: terms.valueLoss.dataSync()[0],
         entropy: terms.entropy.dataSync()[0],
@@ -449,7 +463,9 @@ export class ConvDQN {
       .clipByValue(1 - clipRange, 1 + clipRange)
       .mul(advantages);
 
-    const policyLoss = tf.neg(tf.minimum(unclipped, clipped).mean()) as tf.Scalar;
+    const policyLoss = tf.neg(
+      tf.minimum(unclipped, clipped).mean(),
+    ) as tf.Scalar;
 
     const valuePredictions = values.squeeze([1]);
     const valueLoss = returns
