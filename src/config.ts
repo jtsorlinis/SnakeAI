@@ -22,7 +22,7 @@ export const MUTATION_RATE = 0.08;
 export const MUTATION_SIZE = 0.35;
 export let BASE_HUNGER = 0;
 
-export const NORMAL_STEPS_PER_SECOND = 30;
+export const NORMAL_STEPS_PER_SECOND = 15;
 export const TURBO_TIME_BUDGET_MS = 12;
 
 export const INPUTS = 10;
