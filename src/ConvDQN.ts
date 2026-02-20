@@ -9,7 +9,7 @@ import {
   OUTPUTS,
 } from "./config";
 
-const MODEL_GRID_SIZE = 20;
+const MODEL_GRID_SIZE = 10;
 const KERNEL_SIZE = 3;
 const SPACE_TO_DEPTH_BLOCK = 2;
 const STEM_FILTERS = 32;

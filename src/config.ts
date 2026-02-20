@@ -1,9 +1,9 @@
 import type { Point } from "./types";
 
-export const MIN_GRID_SIZE = 20;
-export const MAX_GRID_SIZE = 20;
+export const MIN_GRID_SIZE = 10;
+export const MAX_GRID_SIZE = 10;
 export const GRID_SIZE_STEP = 5;
-export const DEFAULT_GRID_SIZE = 20;
+export const DEFAULT_GRID_SIZE = 10;
 
 export let GRID_SIZE = DEFAULT_GRID_SIZE;
 export const TILE_SIZE = 24;
