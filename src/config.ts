@@ -30,7 +30,7 @@ export const NEAT_SURVIVAL_RATIO = 0.25;
 export const NEAT_MAX_NODES = 24;
 export let BASE_HUNGER = 0;
 
-export const NORMAL_STEPS_PER_SECOND = 30;
+export const NORMAL_STEPS_PER_SECOND = 15;
 export const TURBO_TIME_BUDGET_MS = 12;
 
 export const INPUTS = 10;
