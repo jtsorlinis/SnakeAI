@@ -4,6 +4,7 @@ import {
   EPSILON_END,
   EPSILON_START,
   GAMMA,
+  GRID_SIZE,
   GRADIENT_STEPS,
   N_STEP_RETURNS,
   OUTPUTS,
@@ -17,6 +18,12 @@ import {
   TRAIN_START_SIZE,
   observationSize,
 } from "./config";
+import {
+  CHECKPOINT_MODEL_KEY,
+  type CheckpointStats,
+  loadCheckpointStats,
+  saveCheckpointStats,
+} from "./checkpointStore";
 import { argMax, ConvDQN } from "./ConvDQN";
 import { ReplayBuffer } from "./ReplayBuffer";
 import { SnakeEnvironment } from "./SnakeEnvironment";
@@ -24,6 +31,7 @@ import type { Agent, TrainerState, Transition } from "./types";
 
 const HISTORY_LIMIT = 1000;
 const AVG_WINDOW = 100;
+const CHECKPOINT_VERSION = 1;
 
 type NStepEntry = Transition;
 
@@ -36,15 +44,17 @@ export class SnakeTrainer {
   private target = new ConvDQN();
 
   private trainingAgents: Agent[] = [];
-  private trainingStates: Uint8Array[] = [];
+  private trainingStates: Float32Array[] = [];
   private nStepQueues: NStepEntry[][] = [];
 
   private showcaseAgent: Agent = this.environment.createAgent();
-  private showcaseObservation: Uint8Array = new Uint8Array(observationSize());
+  private showcaseObservation: Float32Array = new Float32Array(
+    observationSize(),
+  );
   private showcaseQValues = new Float32Array(OUTPUTS);
   private showcaseAction = 0;
 
-  private terminalState = new Uint8Array(observationSize());
+  private terminalState = new Float32Array(observationSize());
   private readonly actionQScratch = new Float32Array(OUTPUTS);
 
   private rewardHistory: number[] = [];
@@ -53,6 +63,7 @@ export class SnakeTrainer {
   private epsilon = EPSILON_START;
   private priorityBeta = PRIORITY_BETA_START;
   private loss = 0;
+  private bestScoreValue = 0;
   private bestReturn = Number.NEGATIVE_INFINITY;
   private gradientSteps = 0;
   private lastTargetSyncGradientStep = 0;
@@ -84,12 +95,12 @@ export class SnakeTrainer {
     }
 
     this.showcaseAgent = this.environment.createAgent();
-    this.showcaseObservation = new Uint8Array(observationSize());
+    this.showcaseObservation = new Float32Array(observationSize());
     this.environment.observe(this.showcaseAgent, this.showcaseObservation);
     this.online.predict(this.showcaseObservation, this.showcaseQValues);
     this.showcaseAction = argMax(this.showcaseQValues);
 
-    this.terminalState = new Uint8Array(observationSize());
+    this.terminalState = new Float32Array(observationSize());
 
     this.rewardHistory = [];
     this.episodeCount = 0;
@@ -97,6 +108,7 @@ export class SnakeTrainer {
     this.epsilon = EPSILON_START;
     this.priorityBeta = PRIORITY_BETA_START;
     this.loss = 0;
+    this.bestScoreValue = 0;
     this.bestReturn = Number.NEGATIVE_INFINITY;
     this.gradientSteps = 0;
     this.lastTargetSyncGradientStep = 0;
@@ -131,6 +143,7 @@ export class SnakeTrainer {
       priorityBeta: this.priorityBeta,
       replaySize: this.replay.size,
       stepsPerSecond: this.stepsPerSecond,
+      bestScore: this.bestScoreValue,
       avgReturn,
       bestReturn:
         this.bestReturn === Number.NEGATIVE_INFINITY ? 0 : this.bestReturn,
@@ -145,6 +158,52 @@ export class SnakeTrainer {
 
   public onGridSizeChanged(): void {
     this.reset();
+  }
+
+  public async saveCheckpoint(): Promise<CheckpointStats> {
+    const snapshot = this.createCheckpointSnapshot();
+    await this.online.saveToIndexedDb(CHECKPOINT_MODEL_KEY);
+    await saveCheckpointStats(snapshot);
+    return snapshot;
+  }
+
+  public async loadCheckpoint(): Promise<CheckpointStats | null> {
+    const snapshot = await loadCheckpointStats();
+    if (!snapshot) {
+      return null;
+    }
+
+    if (snapshot.version !== CHECKPOINT_VERSION) {
+      console.warn(
+        `Skipping checkpoint load due to version mismatch: ${snapshot.version}.`,
+      );
+      return null;
+    }
+
+    if (snapshot.gridSize !== GRID_SIZE) {
+      console.warn(
+        `Skipping checkpoint load due to grid mismatch: saved ${snapshot.gridSize}, current ${GRID_SIZE}.`,
+      );
+      return null;
+    }
+
+    const modelLoaded = await this.online.loadFromIndexedDb(CHECKPOINT_MODEL_KEY);
+    if (!modelLoaded) {
+      return null;
+    }
+
+    this.target.copyWeightsFrom(this.online);
+    this.replay.clear();
+    for (const queue of this.nStepQueues) {
+      queue.length = 0;
+    }
+
+    this.applyCheckpointSnapshot(snapshot);
+
+    this.environment.observe(this.showcaseAgent, this.showcaseObservation);
+    this.online.predict(this.showcaseObservation, this.showcaseQValues);
+    this.showcaseAction = argMax(this.showcaseQValues);
+    return snapshot;
   }
 
   public setStepsPerSecond(value: number): void {
@@ -175,7 +234,7 @@ export class SnakeTrainer {
       this.totalSteps += 1;
 
       if (result.done) {
-        this.recordEpisodeReturn(agent.episodeReturn);
+        this.recordEpisode(agent.episodeReturn, agent.score);
         this.episodeCount += 1;
         this.environment.resetAgent(agent);
         this.trainingStates[i] = this.environment.observe(agent);
@@ -222,7 +281,7 @@ export class SnakeTrainer {
     }
   }
 
-  private selectAction(state: Uint8Array, explore: boolean): number {
+  private selectAction(state: Float32Array, explore: boolean): number {
     if (explore && Math.random() < this.epsilon) {
       return Math.floor(Math.random() * OUTPUTS);
     }
@@ -290,15 +349,62 @@ export class SnakeTrainer {
     this.showcaseAction = argMax(this.showcaseQValues);
   }
 
-  private recordEpisodeReturn(value: number): void {
+  private recordEpisode(value: number, score: number): void {
     this.rewardHistory.push(value);
     if (this.rewardHistory.length > HISTORY_LIMIT) {
       this.rewardHistory.shift();
     }
 
+    if (score > this.bestScoreValue) {
+      this.bestScoreValue = score;
+    }
+
     if (value > this.bestReturn) {
       this.bestReturn = value;
     }
+  }
+
+  private createCheckpointSnapshot(): CheckpointStats {
+    return {
+      version: CHECKPOINT_VERSION,
+      savedAtMs: Date.now(),
+      gridSize: GRID_SIZE,
+      episodeCount: this.episodeCount,
+      totalSteps: this.totalSteps,
+      bestScore: this.bestScoreValue,
+      bestReturn:
+        this.bestReturn === Number.NEGATIVE_INFINITY ? 0 : this.bestReturn,
+      rewardHistory: this.rewardHistory.slice(),
+      epsilon: this.epsilon,
+      priorityBeta: this.priorityBeta,
+      loss: this.loss,
+      gradientSteps: this.gradientSteps,
+      lastTargetSyncGradientStep: this.lastTargetSyncGradientStep,
+    };
+  }
+
+  private applyCheckpointSnapshot(snapshot: CheckpointStats): void {
+    this.rewardHistory = snapshot.rewardHistory.slice(-HISTORY_LIMIT);
+    this.episodeCount = Math.max(0, snapshot.episodeCount);
+    this.totalSteps = Math.max(0, snapshot.totalSteps);
+    this.bestScoreValue = Number.isFinite(snapshot.bestScore)
+      ? Math.max(0, snapshot.bestScore)
+      : 0;
+    this.bestReturn = Number.isFinite(snapshot.bestReturn)
+      ? snapshot.bestReturn
+      : Number.NEGATIVE_INFINITY;
+    this.epsilon = Number.isFinite(snapshot.epsilon)
+      ? snapshot.epsilon
+      : this.currentEpsilon(this.totalSteps);
+    this.priorityBeta = Number.isFinite(snapshot.priorityBeta)
+      ? snapshot.priorityBeta
+      : this.currentPriorityBeta(this.totalSteps);
+    this.loss = Number.isFinite(snapshot.loss) ? snapshot.loss : 0;
+    this.gradientSteps = Math.max(0, snapshot.gradientSteps);
+    this.lastTargetSyncGradientStep = Math.max(
+      0,
+      Math.min(this.gradientSteps, snapshot.lastTargetSyncGradientStep),
+    );
   }
 
   private averageReturn(): number {

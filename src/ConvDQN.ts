@@ -11,9 +11,10 @@ import {
 import type { Transition } from "./types";
 
 const KERNEL_SIZE = 3;
-const CONV1_FILTERS = 12;
-const CONV2_FILTERS = 24;
-const HIDDEN_UNITS = 96;
+const STEM_FILTERS = 32;
+const TRUNK_FILTERS = 32;
+const RESIDUAL_BLOCKS = 5;
+const HEAD_HIDDEN_UNITS = 256;
 
 let backendInitPromise: Promise<void> | null = null;
 
@@ -64,45 +65,55 @@ export async function ensureTfjsBackend(): Promise<void> {
 function createModel(gridSize: number): tf.LayersModel {
   const input = tf.input({ shape: [gridSize, gridSize, OBS_CHANNELS] });
 
-  const conv1 = tf.layers
+  let trunk = tf.layers
     .conv2d({
-      filters: CONV1_FILTERS,
+      filters: STEM_FILTERS,
       kernelSize: KERNEL_SIZE,
       padding: "same",
       activation: "relu",
       kernelInitializer: "heNormal",
       biasInitializer: "zeros",
+      name: "stem_conv",
     })
     .apply(input) as tf.SymbolicTensor;
 
-  const conv2 = tf.layers
+  for (let i = 0; i < RESIDUAL_BLOCKS; i++) {
+    trunk = residualBlock(trunk, STEM_FILTERS, `res_${i}`);
+  }
+
+  trunk = tf.layers
     .conv2d({
-      filters: CONV2_FILTERS,
+      filters: TRUNK_FILTERS,
       kernelSize: KERNEL_SIZE,
       padding: "same",
       activation: "relu",
       kernelInitializer: "heNormal",
       biasInitializer: "zeros",
+      name: "trunk_conv",
     })
-    .apply(conv1) as tf.SymbolicTensor;
+    .apply(trunk) as tf.SymbolicTensor;
 
-  const flat = tf.layers.flatten().apply(conv2) as tf.SymbolicTensor;
+  const flat = tf.layers
+    .flatten({ name: "flatten_features" })
+    .apply(trunk) as tf.SymbolicTensor;
 
   const valueHidden = tf.layers
     .dense({
-      units: HIDDEN_UNITS,
+      units: HEAD_HIDDEN_UNITS,
       activation: "relu",
       kernelInitializer: "heNormal",
       biasInitializer: "zeros",
+      name: "value_hidden",
     })
     .apply(flat) as tf.SymbolicTensor;
 
   const advantageHidden = tf.layers
     .dense({
-      units: HIDDEN_UNITS,
+      units: HEAD_HIDDEN_UNITS,
       activation: "relu",
       kernelInitializer: "heNormal",
       biasInitializer: "zeros",
+      name: "advantage_hidden",
     })
     .apply(flat) as tf.SymbolicTensor;
 
@@ -112,6 +123,7 @@ function createModel(gridSize: number): tf.LayersModel {
       activation: "linear",
       kernelInitializer: "heNormal",
       biasInitializer: "zeros",
+      name: "value",
     })
     .apply(valueHidden) as tf.SymbolicTensor;
 
@@ -121,6 +133,7 @@ function createModel(gridSize: number): tf.LayersModel {
       activation: "linear",
       kernelInitializer: "heNormal",
       biasInitializer: "zeros",
+      name: "advantage",
     })
     .apply(advantageHidden) as tf.SymbolicTensor;
 
@@ -128,6 +141,47 @@ function createModel(gridSize: number): tf.LayersModel {
     inputs: input,
     outputs: [value, advantage],
   });
+}
+
+function residualBlock(
+  input: tf.SymbolicTensor,
+  filters: number,
+  blockName: string,
+  dilationRate = 1,
+): tf.SymbolicTensor {
+  const conv1 = tf.layers
+    .conv2d({
+      filters,
+      kernelSize: KERNEL_SIZE,
+      padding: "same",
+      activation: "relu",
+      dilationRate,
+      kernelInitializer: "heNormal",
+      biasInitializer: "zeros",
+      name: `${blockName}_conv1`,
+    })
+    .apply(input) as tf.SymbolicTensor;
+
+  const conv2 = tf.layers
+    .conv2d({
+      filters,
+      kernelSize: KERNEL_SIZE,
+      padding: "same",
+      activation: "linear",
+      dilationRate,
+      kernelInitializer: "heNormal",
+      biasInitializer: "zeros",
+      name: `${blockName}_conv2`,
+    })
+    .apply(conv1) as tf.SymbolicTensor;
+
+  const added = tf.layers
+    .add({ name: `${blockName}_add` })
+    .apply([input, conv2]) as tf.SymbolicTensor;
+
+  return tf.layers
+    .activation({ activation: "relu", name: `${blockName}_relu` })
+    .apply(added) as tf.SymbolicTensor;
 }
 
 function combineDuelingHeads(
@@ -276,6 +330,25 @@ export class ConvDQN {
   public dispose(): void {
     this.model.dispose();
     this.optimizer.dispose();
+  }
+
+  public async saveToIndexedDb(modelKey: string): Promise<void> {
+    await this.model.save(`indexeddb://${modelKey}`);
+  }
+
+  public async loadFromIndexedDb(modelKey: string): Promise<boolean> {
+    let loadedModel: tf.LayersModel | null = null;
+
+    try {
+      loadedModel = await tf.loadLayersModel(`indexeddb://${modelKey}`);
+      this.model.setWeights(loadedModel.getWeights());
+      return true;
+    } catch (error) {
+      console.warn("Failed to load model checkpoint from IndexedDB.", error);
+      return false;
+    } finally {
+      loadedModel?.dispose();
+    }
   }
 
   private predictQ(input: tf.Tensor4D, training: boolean): tf.Tensor2D {

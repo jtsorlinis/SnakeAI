@@ -65,10 +65,10 @@ class SumTree {
 }
 
 export class ReplayBuffer {
-  private readonly states: Array<Uint8Array | null>;
+  private readonly states: Array<Float32Array | null>;
   private readonly actions: Uint8Array;
   private readonly rewards: Float32Array;
-  private readonly nextStates: Array<Uint8Array | null>;
+  private readonly nextStates: Array<Float32Array | null>;
   private readonly dones: Uint8Array;
   private readonly priorities: Float32Array;
   private readonly sumTree: SumTree;
@@ -78,10 +78,10 @@ export class ReplayBuffer {
   private maxPriority = 1;
 
   constructor(private readonly capacity: number) {
-    this.states = new Array<Uint8Array | null>(capacity).fill(null);
+    this.states = new Array<Float32Array | null>(capacity).fill(null);
     this.actions = new Uint8Array(capacity);
     this.rewards = new Float32Array(capacity);
-    this.nextStates = new Array<Uint8Array | null>(capacity).fill(null);
+    this.nextStates = new Array<Float32Array | null>(capacity).fill(null);
     this.dones = new Uint8Array(capacity);
     this.priorities = new Float32Array(capacity);
     this.sumTree = new SumTree(capacity);

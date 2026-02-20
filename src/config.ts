@@ -16,10 +16,16 @@ export const NET_HEIGHT = 480;
 export const CHART_WIDTH = 300;
 export const CHART_HEIGHT = 140;
 
-export const OBS_CHANNELS = 3;
+export const OBS_CHANNELS = 5;
 export const OUTPUTS = 3;
 
-export const OBS_LABELS = ["Head", "Body", "Food"] as const;
+export const OBS_LABELS = [
+  "Food",
+  "Head",
+  "Body age",
+  "Dir X",
+  "Dir Y",
+] as const;
 export const OUTPUT_LABELS = ["Straight", "Turn left", "Turn right"] as const;
 
 export const NORMAL_STEPS_PER_SECOND = 30;

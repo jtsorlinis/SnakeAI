@@ -6,7 +6,8 @@ import { enableWakeLock } from "./utils/wakeLock";
 async function bootstrap(): Promise<void> {
   await ensureTfjsBackend();
   enableWakeLock();
-  new Game();
+  const game = new Game();
+  await game.initialize();
 }
 
 void bootstrap();

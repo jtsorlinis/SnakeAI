@@ -100,8 +100,6 @@ export class SnakeRenderer {
     this.netCtx.font = "13px JetBrains Mono, monospace";
     this.netCtx.fillText("Observation channels", marginX, 18);
 
-    const colors = ["#66bb6a", "#26a69a", "#ef5350"];
-
     for (let channel = 0; channel < OBS_CHANNELS; channel++) {
       const panelX = marginX + channel * (panelWidth + gap);
       const gridX = panelX + Math.floor((panelWidth - panelGridSize) / 2);
@@ -121,7 +119,7 @@ export class SnakeRenderer {
           const px = gridX + x * cellSize;
           const py = gridY + y * cellSize;
 
-          this.netCtx.fillStyle = value > 0 ? colors[channel] : "rgba(255,255,255,0.04)";
+          this.netCtx.fillStyle = this.observationCellColor(channel, value);
           this.netCtx.fillRect(px, py, cellSize - 1, cellSize - 1);
         }
       }
@@ -173,6 +171,30 @@ export class SnakeRenderer {
       marginX,
       footerY,
     );
+  }
+
+  private observationCellColor(channel: number, value: number): string {
+    if (Math.abs(value) < 1e-6) {
+      return "rgba(255,255,255,0.04)";
+    }
+
+    const alpha = 0.15 + 0.75 * Math.min(1, Math.abs(value));
+
+    if (channel === 0) {
+      return `rgba(239, 83, 80, ${alpha})`;
+    }
+
+    if (channel === 1) {
+      return `rgba(102, 187, 106, ${alpha})`;
+    }
+
+    if (channel === 2) {
+      return `rgba(38, 166, 154, ${alpha})`;
+    }
+
+    return value > 0
+      ? `rgba(102, 187, 106, ${alpha})`
+      : `rgba(66, 165, 245, ${alpha})`;
   }
 
   private drawBoard(state: TrainerState): void {
@@ -285,16 +307,12 @@ export class SnakeRenderer {
 
   private updateStats(state: TrainerState): void {
     this.stats.innerHTML = [
-      `Episodes: <strong>${state.episodeCount}</strong>`,
       `Steps: ${state.totalSteps.toLocaleString()}`,
       `Env steps/s: ${state.stepsPerSecond.toFixed(0)}`,
-      `Grid: ${GRID_SIZE}x${GRID_SIZE}`,
-      `Epsilon: ${state.epsilon.toFixed(3)}`,
-      `PER beta: ${state.priorityBeta.toFixed(3)}`,
-      `Replay size: ${state.replaySize.toLocaleString()}`,
+      `Score (showcase): ${state.boardAgent.score}`,
+      `Best score: ${state.bestScore}`,
       `Avg return (last 100): ${state.avgReturn.toFixed(3)}`,
       `Best return: ${state.bestReturn.toFixed(3)}`,
-      `Loss (EMA): ${state.loss.toFixed(4)}`,
     ].join("<br>");
   }
 }

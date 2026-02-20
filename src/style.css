@@ -193,6 +193,45 @@ label {
   background: #000;
 }
 
+.toast {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 20;
+  max-width: min(90vw, 380px);
+  padding: 0.7rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid #3f3f3f;
+  background: rgba(20, 20, 20, 0.95);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.88rem;
+  font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+  line-height: 1.35;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast.success {
+  border-color: rgba(102, 187, 106, 0.65);
+}
+
+.toast.info {
+  border-color: rgba(100, 181, 246, 0.65);
+}
+
+.toast.error {
+  border-color: rgba(239, 83, 80, 0.65);
+}
+
 @media (max-width: 940px) {
   #app {
     flex-direction: column;

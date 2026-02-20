@@ -12,15 +12,15 @@ export type Agent = {
 };
 
 export type Transition = {
-  state: Uint8Array;
+  state: Float32Array;
   action: number;
   reward: number;
-  nextState: Uint8Array;
+  nextState: Float32Array;
   done: boolean;
 };
 
 export type NetworkState = {
-  observation: Uint8Array | null;
+  observation: Float32Array | null;
   qValues: Float32Array | null;
   action: number;
 };
@@ -34,6 +34,7 @@ export type TrainerState = {
   priorityBeta: number;
   replaySize: number;
   stepsPerSecond: number;
+  bestScore: number;
   avgReturn: number;
   bestReturn: number;
   loss: number;
