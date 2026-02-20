@@ -16,6 +16,7 @@ const PAUSED_FRAME_MS = 1000 / PAUSED_FPS;
 export class Game {
   private trainer = new SnakeTrainer();
   private readonly renderer: SnakeRenderer;
+  private readonly toast: HTMLElement;
   private readonly pauseButton: HTMLButtonElement;
   private readonly gridDownButton: HTMLButtonElement;
   private readonly gridUpButton: HTMLButtonElement;
@@ -29,12 +30,17 @@ export class Game {
   private envStepsPerSecond = 0;
   private throughputStepAccumulator = 0;
   private throughputTimeAccumulator = 0;
+  private toastHideTimer: number | null = null;
+  private checkpointSaveInFlight = false;
+  private queuedBestReturnForSave = Number.NEGATIVE_INFINITY;
+  private persistedBestReturn = Number.NEGATIVE_INFINITY;
 
   constructor() {
     const netCanvas = this.getCanvas("netCanvas");
     const boardCanvas = this.getCanvas("gameCanvas");
     const chartCanvas = this.getCanvas("chartCanvas");
     const statsElement = this.getElement("stats");
+    this.toast = this.getElement("toast");
     const networkToggle = this.getInput("networkToggle");
     this.pauseButton = this.getButton("pauseTraining");
     this.gridDownButton = this.getButton("gridDown");
@@ -68,7 +74,10 @@ export class Game {
     });
     this.refreshGridControls();
     this.updatePauseButton();
+  }
 
+  public async initialize(): Promise<void> {
+    await this.restoreCheckpointOnStartup();
     requestAnimationFrame(this.loop);
   }
 
@@ -120,6 +129,8 @@ export class Game {
     this.stepBudget = 0;
     this.lastFrameTime = 0;
     this.lastPausedRenderTime = 0;
+    this.persistedBestReturn = Number.NEGATIVE_INFINITY;
+    this.queuedBestReturnForSave = Number.NEGATIVE_INFINITY;
   }
 
   private refreshGridControls(): void {
@@ -137,6 +148,8 @@ export class Game {
     this.stepBudget = 0;
     this.lastFrameTime = 0;
     this.lastPausedRenderTime = 0;
+    this.persistedBestReturn = Number.NEGATIVE_INFINITY;
+    this.queuedBestReturnForSave = Number.NEGATIVE_INFINITY;
   }
 
   private togglePause(): void {
@@ -155,6 +168,83 @@ export class Game {
     this.pauseButton.textContent = this.paused
       ? "Resume Training"
       : "Pause Training";
+  }
+
+  private showToast(message: string, variant: "info" | "success" | "error"): void {
+    this.toast.textContent = message;
+    this.toast.className = `toast show ${variant}`;
+
+    if (this.toastHideTimer !== null) {
+      window.clearTimeout(this.toastHideTimer);
+    }
+
+    this.toastHideTimer = window.setTimeout(() => {
+      this.toast.classList.remove("show");
+    }, 2600);
+  }
+
+  private async restoreCheckpointOnStartup(): Promise<void> {
+    try {
+      const snapshot = await this.trainer.loadCheckpoint();
+      if (!snapshot) {
+        return;
+      }
+
+      this.persistedBestReturn = snapshot.bestReturn;
+      this.queuedBestReturnForSave = snapshot.bestReturn;
+      this.showToast(
+        `Loaded checkpoint (best return ${snapshot.bestReturn.toFixed(3)}).`,
+        "info",
+      );
+    } catch (error) {
+      console.error("Failed to restore checkpoint on startup.", error);
+      this.showToast("Failed to load checkpoint from IndexedDB.", "error");
+    }
+  }
+
+  private maybeQueueCheckpointSave(bestReturn: number, episodeCount: number): void {
+    if (episodeCount <= 0) {
+      return;
+    }
+
+    if (!Number.isFinite(bestReturn)) {
+      return;
+    }
+
+    if (bestReturn <= this.persistedBestReturn + 1e-6) {
+      return;
+    }
+
+    if (bestReturn > this.queuedBestReturnForSave) {
+      this.queuedBestReturnForSave = bestReturn;
+    }
+
+    if (!this.checkpointSaveInFlight) {
+      void this.flushCheckpointSaves();
+    }
+  }
+
+  private async flushCheckpointSaves(): Promise<void> {
+    if (this.checkpointSaveInFlight) {
+      return;
+    }
+
+    this.checkpointSaveInFlight = true;
+    try {
+      while (this.queuedBestReturnForSave > this.persistedBestReturn + 1e-6) {
+        const snapshot = await this.trainer.saveCheckpoint();
+        this.persistedBestReturn = snapshot.bestReturn;
+        this.showToast(
+          `Saved checkpoint (best return ${snapshot.bestReturn.toFixed(3)}).`,
+          "success",
+        );
+      }
+    } catch (error) {
+      console.error("Failed to save checkpoint to IndexedDB.", error);
+      this.showToast("Failed to save checkpoint to IndexedDB.", "error");
+    } finally {
+      this.checkpointSaveInFlight = false;
+    }
   }
 
   private loop = (time: number): void => {
@@ -209,7 +299,9 @@ export class Game {
 
     this.trainer.setStepsPerSecond(this.envStepsPerSecond);
 
-    this.renderer.render(this.trainer.getState());
+    const state = this.trainer.getState();
+    this.maybeQueueCheckpointSave(state.bestReturn, state.episodeCount);
+    this.renderer.render(state);
     requestAnimationFrame(this.loop);
   };
 }

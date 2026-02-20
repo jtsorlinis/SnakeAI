@@ -425,6 +425,25 @@ export class ConvDQN {
     this.optimizer.dispose();
   }
 
+  public async saveToIndexedDb(modelKey: string): Promise<void> {
+    await this.model.save(`indexeddb://${modelKey}`);
+  }
+
+  public async loadFromIndexedDb(modelKey: string): Promise<boolean> {
+    let loadedModel: tf.LayersModel | null = null;
+
+    try {
+      loadedModel = await tf.loadLayersModel(`indexeddb://${modelKey}`);
+      this.model.setWeights(loadedModel.getWeights());
+      return true;
+    } catch (error) {
+      console.warn("Failed to load model checkpoint from IndexedDB.", error);
+      return false;
+    } finally {
+      loadedModel?.dispose();
+    }
+  }
+
   private predictPolicyAndValue(
     input: tf.Tensor4D,
     training: boolean,

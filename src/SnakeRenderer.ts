@@ -339,20 +339,12 @@ export class SnakeRenderer {
 
   private updateStats(state: TrainerState): void {
     this.stats.innerHTML = [
-      `Episodes: <strong>${state.episodeCount}</strong>`,
       `Steps: ${state.totalSteps.toLocaleString()}`,
       `Env steps/s: ${state.stepsPerSecond.toFixed(0)}`,
-      `Grid: ${GRID_SIZE}x${GRID_SIZE}`,
-      `PPO updates: ${state.updates.toLocaleString()}`,
-      `Rollout progress: ${(state.rolloutProgress * 100).toFixed(0)}%`,
+      `Score (showcase): ${state.boardAgent.score}`,
+      `Best score: ${state.bestScore}`,
       `Avg return (last 100): ${state.avgReturn.toFixed(3)}`,
       `Best return: ${state.bestReturn.toFixed(3)}`,
-      `Loss (EMA): ${state.totalLoss.toFixed(4)}`,
-      `Policy loss: ${state.policyLoss.toFixed(4)}`,
-      `Value loss: ${state.valueLoss.toFixed(4)}`,
-      `Entropy: ${state.entropy.toFixed(4)}`,
-      `Approx KL: ${state.approxKl.toFixed(4)}`,
-      `Clip fraction: ${state.clipFraction.toFixed(3)}`,
     ].join("<br>");
   }
 }

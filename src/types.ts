@@ -32,6 +32,7 @@ export type TrainerState = {
   episodeCount: number;
   totalSteps: number;
   stepsPerSecond: number;
+  bestScore: number;
   avgReturn: number;
   bestReturn: number;
   totalLoss: number;

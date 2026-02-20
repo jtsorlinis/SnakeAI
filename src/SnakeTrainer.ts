@@ -1,6 +1,7 @@
 import {
   GAE_LAMBDA,
   GAMMA,
+  GRID_SIZE,
   OUTPUTS,
   PPO_CLIP_RANGE,
   PPO_ENTROPY_COEF,
@@ -12,6 +13,12 @@ import {
   TRAIN_ENVS,
   observationSize,
 } from "./config";
+import {
+  CHECKPOINT_MODEL_KEY,
+  type CheckpointStats,
+  loadCheckpointStats,
+  saveCheckpointStats,
+} from "./checkpointStore";
 import { argMax, ConvDQN } from "./ConvDQN";
 import { SnakeEnvironment } from "./SnakeEnvironment";
 import type { Agent, TrainerState } from "./types";
@@ -34,6 +41,8 @@ type PendingPpoUpdate = {
   accumClipFraction: number;
   batches: number;
 };
+
+const CHECKPOINT_VERSION = 1;
 
 function shuffleIndices(indices: Int32Array): void {
   for (let i = indices.length - 1; i > 0; i--) {
@@ -80,6 +89,7 @@ export class SnakeTrainer {
   private episodeCount = 0;
   private totalSteps = 0;
   private stepsPerSecond = 0;
+  private bestScoreValue = 0;
   private bestReturnValue = Number.NEGATIVE_INFINITY;
 
   private totalLoss = 0;
@@ -129,6 +139,7 @@ export class SnakeTrainer {
     this.episodeCount = 0;
     this.totalSteps = 0;
     this.stepsPerSecond = 0;
+    this.bestScoreValue = 0;
     this.bestReturnValue = Number.NEGATIVE_INFINITY;
 
     this.totalLoss = 0;
@@ -174,6 +185,7 @@ export class SnakeTrainer {
       episodeCount: this.episodeCount,
       totalSteps: this.totalSteps,
       stepsPerSecond: this.stepsPerSecond,
+      bestScore: this.bestScoreValue,
       avgReturn: this.averageReturn(),
       bestReturn:
         this.bestReturnValue === Number.NEGATIVE_INFINITY
@@ -198,6 +210,43 @@ export class SnakeTrainer {
 
   public onGridSizeChanged(): void {
     this.reset();
+  }
+
+  public async saveCheckpoint(): Promise<CheckpointStats> {
+    const snapshot = this.createCheckpointSnapshot();
+    await this.online.saveToIndexedDb(CHECKPOINT_MODEL_KEY);
+    await saveCheckpointStats(snapshot);
+    return snapshot;
+  }
+
+  public async loadCheckpoint(): Promise<CheckpointStats | null> {
+    const snapshot = await loadCheckpointStats();
+    if (!snapshot) {
+      return null;
+    }
+
+    if (snapshot.version !== CHECKPOINT_VERSION) {
+      console.warn(
+        `Skipping checkpoint load due to version mismatch: ${snapshot.version}.`,
+      );
+      return null;
+    }
+
+    if (snapshot.gridSize !== GRID_SIZE) {
+      console.warn(
+        `Skipping checkpoint load due to grid mismatch: saved ${snapshot.gridSize}, current ${GRID_SIZE}.`,
+      );
+      return null;
+    }
+
+    const modelLoaded = await this.online.loadFromIndexedDb(CHECKPOINT_MODEL_KEY);
+    if (!modelLoaded) {
+      return null;
+    }
+
+    this.applyCheckpointSnapshot(snapshot);
+    this.refreshShowcasePrediction();
+    return snapshot;
   }
 
   public setStepsPerSecond(value: number): void {
@@ -225,7 +274,7 @@ export class SnakeTrainer {
       this.totalSteps += 1;
 
       if (result.done) {
-        this.recordEpisodeReturn(agent.episodeReturn);
+        this.recordEpisode(agent.episodeReturn, agent.score);
         this.episodeCount += 1;
         this.environment.resetAgent(agent);
       }
@@ -453,15 +502,59 @@ export class SnakeTrainer {
     this.showcaseAction = argMax(this.showcasePolicy);
   }
 
-  private recordEpisodeReturn(value: number): void {
-    this.rewardHistory.push(value);
+  private recordEpisode(episodeReturn: number, episodeScore: number): void {
+    this.rewardHistory.push(episodeReturn);
     if (this.rewardHistory.length > HISTORY_LIMIT) {
       this.rewardHistory.shift();
     }
 
-    if (this.bestReturnValue < value) {
-      this.bestReturnValue = value;
+    if (this.bestReturnValue < episodeReturn) {
+      this.bestReturnValue = episodeReturn;
     }
+
+    if (this.bestScoreValue < episodeScore) {
+      this.bestScoreValue = episodeScore;
+    }
+  }
+
+  private createCheckpointSnapshot(): CheckpointStats {
+    return {
+      version: CHECKPOINT_VERSION,
+      savedAtMs: Date.now(),
+      gridSize: GRID_SIZE,
+      episodeCount: this.episodeCount,
+      totalSteps: this.totalSteps,
+      bestScore: this.bestScoreValue,
+      bestReturn:
+        this.bestReturnValue === Number.NEGATIVE_INFINITY
+          ? 0
+          : this.bestReturnValue,
+      rewardHistory: this.rewardHistory.slice(),
+      totalLoss: this.totalLoss,
+      policyLoss: this.policyLoss,
+      valueLoss: this.valueLoss,
+      entropy: this.entropy,
+      approxKl: this.approxKl,
+      clipFraction: this.clipFraction,
+      updates: this.updates,
+    };
+  }
+
+  private applyCheckpointSnapshot(snapshot: CheckpointStats): void {
+    this.rewardHistory = snapshot.rewardHistory.slice();
+    this.episodeCount = Math.max(0, snapshot.episodeCount);
+    this.totalSteps = Math.max(0, snapshot.totalSteps);
+    this.bestScoreValue = Math.max(0, snapshot.bestScore);
+    this.bestReturnValue = Number.isFinite(snapshot.bestReturn)
+      ? snapshot.bestReturn
+      : Number.NEGATIVE_INFINITY;
+    this.totalLoss = snapshot.totalLoss;
+    this.policyLoss = snapshot.policyLoss;
+    this.valueLoss = snapshot.valueLoss;
+    this.entropy = snapshot.entropy;
+    this.approxKl = snapshot.approxKl;
+    this.clipFraction = snapshot.clipFraction;
+    this.updates = Math.max(0, snapshot.updates);
   }
 
   private averageReturn(): number {
