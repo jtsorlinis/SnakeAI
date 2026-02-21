@@ -16,8 +16,9 @@ import {
   OUTPUTS,
   OUTPUT_LABELS,
   TILE_SIZE,
+  MULTI_VIEW_COLUMNS,
 } from "./config";
-import type { Point, TrainerState } from "./types";
+import type { Agent, Point, TrainerState } from "./types";
 
 type RendererElements = {
   netCanvas: HTMLCanvasElement;
@@ -44,7 +45,7 @@ export class SnakeRenderer {
   private readonly chartCtx: CanvasRenderingContext2D;
   private readonly stats: HTMLElement;
 
-  private showNetwork = true;
+  private showMiniBoardsInLeft = false;
   private netMouse: Point | null = null;
 
   constructor(elements: RendererElements) {
@@ -80,12 +81,9 @@ export class SnakeRenderer {
     });
   }
 
-  public setShowNetwork(show: boolean): void {
-    this.showNetwork = show;
-    this.net.style.display = show ? "block" : "none";
-
-    if (!show) {
-      this.netMouse = null;
+  public setShowMiniBoardsInLeft(show: boolean): void {
+    this.showMiniBoardsInLeft = show;
+    if (show) {
       this.net.style.cursor = "default";
     }
   }
@@ -93,11 +91,13 @@ export class SnakeRenderer {
   public render(state: TrainerState): void {
     this.syncBoardSize();
 
-    if (this.showNetwork) {
+    if (this.showMiniBoardsInLeft && state.boardAgents.length > 0) {
+      this.drawBoardGridInNet(state.boardAgents);
+    } else {
       this.drawNetwork(state);
     }
 
-    this.drawBoard(state);
+    this.drawSingleBoard(state.boardAgent);
     this.drawHistory(state.fitnessHistory);
     this.updateStats(state);
   }
@@ -449,29 +449,92 @@ export class SnakeRenderer {
     }
   }
 
-  private drawBoard(state: TrainerState): void {
-    const agent = state.boardAgent;
+  private drawSingleBoard(agent: Agent): void {
+    this.drawBoardAt(this.ctx, agent, 0, 0, BOARD_SIZE);
+  }
 
-    this.ctx.fillStyle = "#000";
-    this.ctx.fillRect(0, 0, BOARD_SIZE, BOARD_SIZE);
+  private drawBoardGridInNet(agents: readonly Agent[]): void {
+    this.drawBoardGrid(this.netCtx, this.net.width, this.net.height, agents);
+    this.net.style.cursor = "default";
+  }
 
-    this.ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
-    this.ctx.lineWidth = 1.1;
+  private drawBoardGrid(
+    context: CanvasRenderingContext2D,
+    canvasWidth: number,
+    canvasHeight: number,
+    agents: readonly Agent[],
+  ): void {
+    context.fillStyle = "#000";
+    context.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    const columns = Math.max(1, MULTI_VIEW_COLUMNS);
+    const rows = Math.max(1, Math.ceil(agents.length / columns));
+    const gap = Math.max(2, Math.floor(Math.min(canvasWidth, canvasHeight) * 0.01));
+
+    const boardSizeByWidth = (canvasWidth - gap * (columns + 1)) / columns;
+    const boardSizeByHeight = (canvasHeight - gap * (rows + 1)) / rows;
+    const cellSize = Math.max(8, Math.floor(Math.min(boardSizeByWidth, boardSizeByHeight)));
+
+    const gridWidth = cellSize * columns + gap * (columns - 1);
+    const gridHeight = cellSize * rows + gap * (rows - 1);
+    const startX = Math.floor((canvasWidth - gridWidth) / 2);
+    const startY = Math.floor((canvasHeight - gridHeight) / 2);
+
+    for (let i = 0; i < agents.length; i++) {
+      const row = Math.floor(i / columns);
+      const col = i % columns;
+      const x = startX + col * (cellSize + gap);
+      const y = startY + row * (cellSize + gap);
+      const agent = agents[i];
+
+      context.strokeStyle = agent.alive
+        ? "rgba(100, 108, 255, 0.45)"
+        : "rgba(244, 67, 54, 0.45)";
+      context.lineWidth = 1;
+      context.strokeRect(x - 1.5, y - 1.5, cellSize + 3, cellSize + 3);
+
+      this.drawBoardAt(context, agent, x, y, cellSize);
+
+      if (!agent.alive) {
+        context.fillStyle = "rgba(0, 0, 0, 0.45)";
+        context.fillRect(x, y, cellSize, cellSize);
+      }
+    }
+  }
+
+  private drawBoardAt(
+    context: CanvasRenderingContext2D,
+    agent: Agent,
+    x: number,
+    y: number,
+    size: number,
+  ): void {
+    const scale = size / BOARD_SIZE;
+
+    context.save();
+    context.translate(x, y);
+    context.scale(scale, scale);
+
+    context.fillStyle = "#000";
+    context.fillRect(0, 0, BOARD_SIZE, BOARD_SIZE);
+
+    context.strokeStyle = "rgba(255, 255, 255, 0.12)";
+    context.lineWidth = 1.1;
 
     for (let p = 0; p <= BOARD_SIZE; p += TILE_SIZE) {
-      this.ctx.beginPath();
-      this.ctx.moveTo(p + 0.5, 0);
-      this.ctx.lineTo(p + 0.5, BOARD_SIZE);
-      this.ctx.stroke();
+      context.beginPath();
+      context.moveTo(p + 0.5, 0);
+      context.lineTo(p + 0.5, BOARD_SIZE);
+      context.stroke();
 
-      this.ctx.beginPath();
-      this.ctx.moveTo(0, p + 0.5);
-      this.ctx.lineTo(BOARD_SIZE, p + 0.5);
-      this.ctx.stroke();
+      context.beginPath();
+      context.moveTo(0, p + 0.5);
+      context.lineTo(BOARD_SIZE, p + 0.5);
+      context.stroke();
     }
 
-    this.ctx.fillStyle = "#f44336";
-    this.ctx.fillRect(
+    context.fillStyle = "#f44336";
+    context.fillRect(
       agent.food.x * TILE_SIZE + 3,
       agent.food.y * TILE_SIZE + 3,
       TILE_SIZE - 6,
@@ -480,14 +543,16 @@ export class SnakeRenderer {
 
     for (let i = agent.body.length - 1; i >= 0; i--) {
       const part = agent.body[i];
-      this.ctx.fillStyle = i === 0 ? "#4caf50" : "#43a047";
-      this.ctx.fillRect(
+      context.fillStyle = i === 0 ? "#4caf50" : "#43a047";
+      context.fillRect(
         part.x * TILE_SIZE + 2,
         part.y * TILE_SIZE + 2,
         TILE_SIZE - 4,
         TILE_SIZE - 4,
       );
     }
+
+    context.restore();
   }
 
   private drawHistory(history: readonly number[]): void {

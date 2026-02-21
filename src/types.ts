@@ -23,6 +23,7 @@ export type NetworkActivations = {
 
 export type TrainerState = {
   boardAgent: Agent;
+  boardAgents: readonly Agent[];
   fitnessHistory: readonly number[];
   generation: number;
   alive: number;

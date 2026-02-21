@@ -14,6 +14,8 @@ export const NET_WIDTH = 480;
 export const NET_HEIGHT = 480;
 export const CHART_WIDTH = 300;
 export const CHART_HEIGHT = 140;
+export const MULTI_VIEW_COUNT = 25;
+export const MULTI_VIEW_COLUMNS = 5;
 
 export const POP_SIZE = 180;
 export const ELITE_COUNT = 8;

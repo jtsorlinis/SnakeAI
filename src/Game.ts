@@ -3,6 +3,7 @@ import {
   GRID_SIZE_STEP,
   MAX_GRID_SIZE,
   MIN_GRID_SIZE,
+  MULTI_VIEW_COUNT,
   NORMAL_STEPS_PER_SECOND,
   TURBO_TIME_BUDGET_MS,
   setGridSize,
@@ -14,12 +15,14 @@ export class Game {
   private trainer = new SnakeTrainer();
   private readonly renderer: SnakeRenderer;
   private readonly turboToggle: HTMLInputElement;
+  private readonly leftViewToggle: HTMLInputElement;
   private readonly gridDownButton: HTMLButtonElement;
   private readonly gridUpButton: HTMLButtonElement;
   private readonly resetButton: HTMLButtonElement;
   private readonly gridValue: HTMLElement;
 
   private turboMode = false;
+  private showMiniBoardsInLeft = false;
   private stepBudget = 0;
   private lastFrameTime = 0;
 
@@ -29,7 +32,7 @@ export class Game {
     const chartCanvas = this.getCanvas("chartCanvas");
     const statsElement = this.getElement("stats");
     this.turboToggle = this.getInput("turboToggle");
-    const networkToggle = this.getInput("networkToggle");
+    this.leftViewToggle = this.getInput("leftViewToggle");
     this.gridDownButton = this.getButton("gridDown");
     this.gridUpButton = this.getButton("gridUp");
     this.resetButton = this.getButton("resetTraining");
@@ -48,9 +51,11 @@ export class Game {
       this.stepBudget = 0;
     });
 
-    this.renderer.setShowNetwork(networkToggle.checked);
-    networkToggle.addEventListener("change", () => {
-      this.renderer.setShowNetwork(networkToggle.checked);
+    this.showMiniBoardsInLeft = this.leftViewToggle.checked;
+    this.renderer.setShowMiniBoardsInLeft(this.showMiniBoardsInLeft);
+    this.leftViewToggle.addEventListener("change", () => {
+      this.showMiniBoardsInLeft = this.leftViewToggle.checked;
+      this.renderer.setShowMiniBoardsInLeft(this.showMiniBoardsInLeft);
     });
 
     this.gridDownButton.addEventListener("click", () => {
@@ -146,7 +151,8 @@ export class Game {
       }
     }
 
-    this.renderer.render(this.trainer.getState());
+    const boardSampleCount = this.showMiniBoardsInLeft ? MULTI_VIEW_COUNT : 0;
+    this.renderer.render(this.trainer.getState(boardSampleCount));
     requestAnimationFrame(this.loop);
   };
 }

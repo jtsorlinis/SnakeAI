@@ -18,6 +18,8 @@ export class SnakeTrainer {
 
   private showcaseGenome: Genome | null = null;
   private showcaseAgent: Agent | null = null;
+  private randomBoardAgents: Agent[] = [];
+  private randomBoardGeneration = -1;
 
   constructor() {
     this.reset();
@@ -32,6 +34,7 @@ export class SnakeTrainer {
     this.fitnessHistory = [];
     this.showcaseGenome = null;
     this.showcaseAgent = null;
+    this.invalidateRandomBoardAgents();
 
     for (let i = 0; i < POP_SIZE; i++) {
       this.population.push(
@@ -73,7 +76,7 @@ export class SnakeTrainer {
     }
   }
 
-  public getState(): TrainerState {
+  public getState(randomBoardCount = 0): TrainerState {
     let alive = 0;
     for (const agent of this.population) {
       if (agent.alive) {
@@ -94,6 +97,7 @@ export class SnakeTrainer {
 
     return {
       boardAgent,
+      boardAgents: this.getRandomBoardAgents(randomBoardCount),
       fitnessHistory: this.fitnessHistory,
       generation: this.generation,
       alive,
@@ -115,11 +119,84 @@ export class SnakeTrainer {
     } else {
       this.showcaseAgent = null;
     }
+
+    this.invalidateRandomBoardAgents();
   }
 
   private setShowcaseGenome(genome: Genome): void {
     this.showcaseGenome = new Float32Array(genome);
     this.showcaseAgent = this.environment.createAgent(this.showcaseGenome);
+  }
+
+  private invalidateRandomBoardAgents(): void {
+    this.randomBoardAgents = [];
+    this.randomBoardGeneration = -1;
+  }
+
+  private sampleAgents(candidates: Agent[], sampleCount: number): Agent[] {
+    const count = Math.min(sampleCount, candidates.length);
+    const pool = candidates.slice();
+    const sampled: Agent[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const pick = i + Math.floor(Math.random() * (pool.length - i));
+      [pool[i], pool[pick]] = [pool[pick], pool[i]];
+      sampled.push(pool[i]);
+    }
+
+    return sampled;
+  }
+
+  private getRandomBoardAgents(randomBoardCount: number): readonly Agent[] {
+    if (randomBoardCount <= 0) {
+      return [];
+    }
+
+    const requiredCount = Math.min(randomBoardCount, this.population.length);
+    const generationChanged = this.randomBoardGeneration !== this.generation;
+    const sizeChanged = this.randomBoardAgents.length !== requiredCount;
+
+    if (generationChanged || sizeChanged) {
+      const aliveFirst = this.sampleAgents(
+        this.population.filter((agent) => agent.alive),
+        requiredCount,
+      );
+      const remaining = requiredCount - aliveFirst.length;
+      if (remaining > 0) {
+        const aliveSet = new Set(aliveFirst);
+        const fallback = this.sampleAgents(
+          this.population.filter((agent) => !aliveSet.has(agent)),
+          remaining,
+        );
+        this.randomBoardAgents = aliveFirst.concat(fallback);
+      } else {
+        this.randomBoardAgents = aliveFirst;
+      }
+      this.randomBoardGeneration = this.generation;
+    }
+
+    const currentlyAlive = new Set(
+      this.randomBoardAgents.filter((agent) => agent.alive),
+    );
+    const replacementPool = this.population.filter(
+      (agent) => agent.alive && !currentlyAlive.has(agent),
+    );
+
+    for (let i = 0; i < this.randomBoardAgents.length; i++) {
+      const current = this.randomBoardAgents[i];
+      if (current.alive || replacementPool.length === 0) {
+        continue;
+      }
+
+      const pick = Math.floor(Math.random() * replacementPool.length);
+      const replacement = replacementPool[pick];
+      this.randomBoardAgents[i] = replacement;
+      currentlyAlive.add(replacement);
+      replacementPool[pick] = replacementPool[replacementPool.length - 1];
+      replacementPool.pop();
+    }
+
+    return this.randomBoardAgents;
   }
 
   private evolve(): void {
@@ -141,5 +218,6 @@ export class SnakeTrainer {
       this.environment.createAgent(genome),
     );
     this.generation += 1;
+    this.invalidateRandomBoardAgents();
   }
 }
