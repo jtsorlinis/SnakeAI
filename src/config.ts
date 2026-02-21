@@ -27,10 +27,8 @@ export const TURBO_TIME_BUDGET_MS = 12;
 
 export const INPUTS = 10;
 export const OUTPUTS = 3;
-export const BASE_HIDDEN_UNITS = Math.max(
-  2,
-  Math.round((2 * INPUTS) / 3 + OUTPUTS),
-);
+export const BASE_HIDDEN_UNITS = 8;
+
 export const HIDDEN_LAYERS = 1;
 export let HIDDEN_LAYER_UNITS: number[] = [];
 export let IH_COUNT = 0;
