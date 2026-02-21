@@ -23,7 +23,7 @@ export class Game {
   private readonly resetButton: HTMLButtonElement;
   private readonly gridValue: HTMLElement;
 
-  private paused = false;
+  private paused = true;
   private stepBudget = 0;
   private lastFrameTime = 0;
   private lastPausedRenderTime = 0;

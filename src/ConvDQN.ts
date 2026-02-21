@@ -9,11 +9,6 @@ import {
   OUTPUTS,
 } from "./config";
 
-const KERNEL_SIZE = 3;
-const STEM_FILTERS = 32;
-const TRUNK_FILTERS = 32;
-const RESIDUAL_BLOCKS = 5;
-const HEAD_HIDDEN_UNITS = 256;
 const LOG_EPSILON = 1e-8;
 
 type PPOTrainInputs = {
@@ -50,118 +45,104 @@ export type PolicyValuePrediction = {
 
 let backendInitPromise: Promise<void> | null = null;
 
-function residualBlock(
-  input: tf.SymbolicTensor,
-  filters: number,
-  blockName: string,
-  dilationRate = 1,
-): tf.SymbolicTensor {
-  const conv1 = tf.layers
-    .conv2d({
-      filters,
-      kernelSize: KERNEL_SIZE,
-      padding: "same",
-      activation: "relu",
-      dilationRate,
-      kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
-      name: `${blockName}_conv1`,
-    })
-    .apply(input) as tf.SymbolicTensor;
-
-  const conv2 = tf.layers
-    .conv2d({
-      filters,
-      kernelSize: KERNEL_SIZE,
-      padding: "same",
-      activation: "linear",
-      dilationRate,
-      kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
-      name: `${blockName}_conv2`,
-    })
-    .apply(conv1) as tf.SymbolicTensor;
-
-  const added = tf.layers
-    .add({ name: `${blockName}_add` })
-    .apply([input, conv2]) as tf.SymbolicTensor;
-
-  return tf.layers
-    .activation({ activation: "relu", name: `${blockName}_relu` })
-    .apply(added) as tf.SymbolicTensor;
-}
-
-function createModel(gridSize: number): tf.LayersModel {
+function createOptimalModel(gridSize: number): tf.LayersModel {
   const input = tf.input({ shape: [gridSize, gridSize, OBS_CHANNELS] });
 
   let trunk = tf.layers
     .conv2d({
-      filters: STEM_FILTERS,
-      kernelSize: KERNEL_SIZE,
+      filters: 32,
+      kernelSize: 3,
       padding: "same",
       activation: "relu",
       kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
-      name: "stem_conv",
+      name: "conv1",
     })
     .apply(input) as tf.SymbolicTensor;
 
-  for (let i = 0; i < RESIDUAL_BLOCKS; i++) {
-    trunk = residualBlock(trunk, STEM_FILTERS, `res_${i}`);
-  }
-
   trunk = tf.layers
     .conv2d({
-      filters: TRUNK_FILTERS,
-      kernelSize: KERNEL_SIZE,
+      filters: 32,
+      kernelSize: 3,
       padding: "same",
       activation: "relu",
       kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
-      name: "trunk_conv",
+      name: "conv2",
     })
     .apply(trunk) as tf.SymbolicTensor;
 
-  const flattened = tf.layers
-    .flatten({ name: "flatten_features" })
+  trunk = tf.layers
+    .conv2d({
+      filters: 32,
+      kernelSize: 3,
+      padding: "same",
+      activation: "relu",
+      kernelInitializer: "heNormal",
+      name: "conv3",
+    })
     .apply(trunk) as tf.SymbolicTensor;
+
+  const policyFeatures = tf.layers
+    .conv2d({
+      filters: 8,
+      kernelSize: 1,
+      padding: "same",
+      activation: "relu",
+      kernelInitializer: "heNormal",
+      name: "policy_conv",
+    })
+    .apply(trunk) as tf.SymbolicTensor;
+
+  const policyFlat = tf.layers
+    .flatten({ name: "policy_flatten" })
+    .apply(policyFeatures) as tf.SymbolicTensor;
 
   const policyHidden = tf.layers
     .dense({
-      units: HEAD_HIDDEN_UNITS,
+      units: 64,
       activation: "relu",
       kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
       name: "policy_hidden",
     })
-    .apply(flattened) as tf.SymbolicTensor;
-
-  const valueHidden = tf.layers
-    .dense({
-      units: HEAD_HIDDEN_UNITS,
-      activation: "relu",
-      kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
-      name: "value_hidden",
-    })
-    .apply(flattened) as tf.SymbolicTensor;
+    .apply(policyFlat) as tf.SymbolicTensor;
 
   const policyLogits = tf.layers
     .dense({
       units: OUTPUTS,
       activation: "linear",
       kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
       name: "policy_logits",
     })
     .apply(policyHidden) as tf.SymbolicTensor;
+
+  const valueFeatures = tf.layers
+    .conv2d({
+      filters: 8,
+      kernelSize: 1,
+      padding: "same",
+      activation: "relu",
+      kernelInitializer: "heNormal",
+      name: "value_conv",
+    })
+    .apply(trunk) as tf.SymbolicTensor;
+
+  const valueFlat = tf.layers
+    .flatten({ name: "value_flatten" })
+    .apply(valueFeatures) as tf.SymbolicTensor;
+
+  const valueHidden = tf.layers
+    .dense({
+      units: 64,
+      activation: "relu",
+      kernelInitializer: "heNormal",
+      name: "value_hidden",
+    })
+    .apply(valueFlat) as tf.SymbolicTensor;
 
   const value = tf.layers
     .dense({
       units: 1,
       activation: "linear",
       kernelInitializer: "heNormal",
-      biasInitializer: "zeros",
       name: "value",
     })
     .apply(valueHidden) as tf.SymbolicTensor;
@@ -169,6 +150,7 @@ function createModel(gridSize: number): tf.LayersModel {
   return tf.model({
     inputs: input,
     outputs: [policyLogits, value],
+    name: "snake_policy_value_optimal",
   });
 }
 
@@ -269,7 +251,7 @@ export class ConvDQN {
   constructor(gridSize = GRID_SIZE) {
     this.width = gridSize;
     this.area = this.width * this.width;
-    this.model = createModel(this.width);
+    this.model = createOptimalModel(this.width);
     this.optimizer = tf.train.adam(
       LEARNING_RATE,
       ADAM_BETA1,
