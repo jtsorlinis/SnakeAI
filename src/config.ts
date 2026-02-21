@@ -15,6 +15,9 @@ export const NET_WIDTH = 480;
 export const NET_HEIGHT = 480;
 export const CHART_WIDTH = 300;
 export const CHART_HEIGHT = 140;
+export const CHART_EMA_WINDOW = 20;
+export const CHART_LOOKBACK_EPISODES = 5000;
+export const REWARD_HISTORY_LIMIT = 20000;
 
 export const OBS_CHANNELS = 5;
 export const OUTPUTS = 3;

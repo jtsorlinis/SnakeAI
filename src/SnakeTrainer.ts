@@ -10,6 +10,7 @@ import {
   PPO_ROLLOUT_STEPS,
   PPO_TARGET_KL,
   PPO_VALUE_LOSS_COEF,
+  REWARD_HISTORY_LIMIT,
   TRAIN_ENVS,
   observationSize,
 } from "./config";
@@ -23,7 +24,6 @@ import { argMax, ConvDQN } from "./ConvDQN";
 import { SnakeEnvironment } from "./SnakeEnvironment";
 import type { Agent, TrainerState } from "./types";
 
-const HISTORY_LIMIT = 1000;
 const AVG_WINDOW = 100;
 const METRIC_EMA = 0.1;
 const PPO_MINIBATCHES_PER_SIM_TICK = 1;
@@ -504,8 +504,11 @@ export class SnakeTrainer {
 
   private recordEpisode(episodeReturn: number, episodeScore: number): void {
     this.rewardHistory.push(episodeReturn);
-    if (this.rewardHistory.length > HISTORY_LIMIT) {
-      this.rewardHistory.shift();
+    if (this.rewardHistory.length > REWARD_HISTORY_LIMIT + 512) {
+      this.rewardHistory.splice(
+        0,
+        this.rewardHistory.length - REWARD_HISTORY_LIMIT,
+      );
     }
 
     if (this.bestReturnValue < episodeReturn) {
@@ -541,7 +544,7 @@ export class SnakeTrainer {
   }
 
   private applyCheckpointSnapshot(snapshot: CheckpointStats): void {
-    this.rewardHistory = snapshot.rewardHistory.slice();
+    this.rewardHistory = snapshot.rewardHistory.slice(-REWARD_HISTORY_LIMIT);
     this.episodeCount = Math.max(0, snapshot.episodeCount);
     this.totalSteps = Math.max(0, snapshot.totalSteps);
     this.bestScoreValue = Math.max(0, snapshot.bestScore);

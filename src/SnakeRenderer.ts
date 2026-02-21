@@ -1,5 +1,7 @@
 import {
+  CHART_EMA_WINDOW,
   BOARD_SIZE,
+  CHART_LOOKBACK_EPISODES,
   CHART_HEIGHT,
   CHART_WIDTH,
   GRID_SIZE,
@@ -18,8 +20,6 @@ type RendererElements = {
   chartCanvas: HTMLCanvasElement;
   statsElement: HTMLElement;
 };
-
-const CHART_EMA_WINDOW = 20;
 
 export class SnakeRenderer {
   private readonly net: HTMLCanvasElement;
@@ -269,16 +269,22 @@ export class SnakeRenderer {
       this.chartCtx.stroke();
     }
 
-    if (history.length < 2) {
+    const visibleHistory = history.slice(-CHART_LOOKBACK_EPISODES);
+
+    if (visibleHistory.length < 2) {
       return;
     }
 
-    const smoothed = this.computeSmoothedHistory(history);
+    const smoothed = this.computeSmoothedHistory(visibleHistory);
+    const plotValues = this.downsampleHistory(
+      smoothed,
+      Math.max(2, CHART_WIDTH - 20),
+    );
 
     let minValue = Number.POSITIVE_INFINITY;
     let maxValue = Number.NEGATIVE_INFINITY;
 
-    for (const value of smoothed) {
+    for (const value of plotValues) {
       if (value < minValue) {
         minValue = value;
       }
@@ -300,9 +306,9 @@ export class SnakeRenderer {
     this.chartCtx.lineWidth = 2;
     this.chartCtx.beginPath();
 
-    for (let i = 0; i < smoothed.length; i++) {
-      const x = 10 + (i / (smoothed.length - 1)) * (CHART_WIDTH - 20);
-      const normalized = (smoothed[i] - minValue) / (maxValue - minValue);
+    for (let i = 0; i < plotValues.length; i++) {
+      const x = 10 + (i / (plotValues.length - 1)) * (CHART_WIDTH - 20);
+      const normalized = (plotValues[i] - minValue) / (maxValue - minValue);
       const y = CHART_HEIGHT - 10 - normalized * (CHART_HEIGHT - 20);
 
       if (i === 0) {
@@ -317,7 +323,7 @@ export class SnakeRenderer {
     this.chartCtx.fillStyle = "rgba(255, 255, 255, 0.75)";
     this.chartCtx.font = "12px IBM Plex Mono, monospace";
     this.chartCtx.fillText(
-      `Episode return EMA(${CHART_EMA_WINDOW})`,
+      `EMA${CHART_EMA_WINDOW} | ${visibleHistory.length.toLocaleString()} eps`,
       10,
       16,
     );
@@ -335,6 +341,37 @@ export class SnakeRenderer {
     }
 
     return smoothed;
+  }
+
+  private downsampleHistory(
+    history: readonly number[],
+    targetPoints: number,
+  ): number[] {
+    if (history.length <= targetPoints) {
+      return history.slice();
+    }
+
+    const downsampled = new Array<number>(targetPoints);
+
+    for (let i = 0; i < targetPoints; i++) {
+      const start = Math.floor((i * history.length) / targetPoints);
+      const end = Math.max(
+        start + 1,
+        Math.floor(((i + 1) * history.length) / targetPoints),
+      );
+
+      let sum = 0;
+      let count = 0;
+
+      for (let j = start; j < end; j++) {
+        sum += history[j];
+        count += 1;
+      }
+
+      downsampled[i] = sum / count;
+    }
+
+    return downsampled;
   }
 
   private updateStats(state: TrainerState): void {
