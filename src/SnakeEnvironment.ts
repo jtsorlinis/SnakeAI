@@ -198,7 +198,7 @@ export class SnakeEnvironment {
     target[3] = this.findTailDistance(head, front, agent.body);
     target[4] = this.findTailDistance(head, left, agent.body);
     target[5] = this.findTailDistance(head, right, agent.body);
-    target[6] = this.checkForFood(head, front, agent.food) > 0 ? 1 : 0;
+    target[6] = this.checkForFood(head, front, agent.food);
     target[7] = this.checkForFood(head, left, agent.food);
     target[8] = front.x;
     target[9] = front.y;
