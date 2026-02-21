@@ -4,12 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Snake GA Trainer</title>
-    <script type="module" crossorigin src="/SnakeAI/assets/index-NKnTdlaB.js"></script>
+    <script type="module" crossorigin src="/SnakeAI/assets/index-LsOBVcfb.js"></script>
     <link rel="stylesheet" crossorigin href="/SnakeAI/assets/index-D4RIKHEa.css">
   </head>
   <body>
     <main id="app">
-      <canvas id="netCanvas" aria-label="Neural network"></canvas>
+      <canvas id="netCanvas" aria-label="Left visualization"></canvas>
       <canvas id="gameCanvas" aria-label="Snake board"></canvas>
       <section class="panel">
         <h1>Snake GA Trainer</h1>
@@ -19,21 +19,29 @@
           <label for="turboToggle">Turbo (max speed)</label>
         </div>
         <div class="toggle-row">
-          <input id="networkToggle" type="checkbox" checked />
-          <label for="networkToggle">Show network</label>
+          <input id="leftViewToggle" type="checkbox" />
+          <label for="leftViewToggle">Visualise population</label>
         </div>
         <div class="control-grid">
           <div class="hidden-controls">
             <span class="control-label">Grid size</span>
             <div class="hidden-buttons">
-              <button id="gridDown" type="button" aria-label="Decrease grid size">
+              <button
+                id="gridDown"
+                type="button"
+                aria-label="Decrease grid size"
+              >
                 -
               </button>
               <span id="gridValue">10x10</span>
               <button id="gridUp" type="button" aria-label="Increase grid size">
                 +
               </button>
-              <button id="resetTraining" type="button" aria-label="Reset training">
+              <button
+                id="resetTraining"
+                type="button"
+                aria-label="Reset training"
+              >
                 Reset
               </button>
             </div>
