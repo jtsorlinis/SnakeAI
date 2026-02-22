@@ -18,10 +18,8 @@ export const MULTI_VIEW_COUNT = 25;
 export const MULTI_VIEW_COLUMNS = 5;
 
 export const POP_SIZE = 180;
-export const ELITE_COUNT = 8;
-export const TOURNAMENT_SIZE = 4;
-export const MUTATION_RATE = 0.08;
-export const MUTATION_SIZE = 0.35;
+export const ES_PARENT_COUNT = 12;
+export const ES_SIGMA = 0.12;
 export let BASE_HUNGER = 0;
 
 export const NORMAL_STEPS_PER_SECOND = 15;
