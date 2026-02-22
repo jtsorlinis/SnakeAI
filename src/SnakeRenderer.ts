@@ -139,12 +139,12 @@ export class SnakeRenderer {
   }
 
   private drawNetwork(state: TrainerState): void {
-    const { genome, activations } = state.network;
+    const { policy, activations } = state.network;
 
     this.netCtx.fillStyle = "#000";
     this.netCtx.fillRect(0, 0, NET_WIDTH, NET_HEIGHT);
 
-    if (!genome || !activations) {
+    if (!policy || !activations) {
       return;
     }
 
@@ -201,7 +201,7 @@ export class SnakeRenderer {
             y1: inputY[i],
             x2: firstHiddenX,
             y2: firstHiddenY[h],
-            weight: genome[wOffset + i],
+            weight: policy[wOffset + i],
             label: `${INPUT_LABELS[i]} -> H1:${h + 1}`,
           });
         }
@@ -224,7 +224,7 @@ export class SnakeRenderer {
               y1: fromY[from],
               x2: toX,
               y2: toY[to],
-              weight: genome[wOffset + from],
+              weight: policy[wOffset + from],
               label: `H${layer}:${from + 1} -> H${layer + 1}:${to + 1}`,
             });
           }
@@ -244,7 +244,7 @@ export class SnakeRenderer {
             y1: lastHiddenY[h],
             x2: outputX,
             y2: outputY[o],
-            weight: genome[wOffset + h],
+            weight: policy[wOffset + h],
             label: `H${hiddenLayerCount}:${h + 1} -> ${OUTPUT_LABELS[o]}`,
           });
         }
@@ -258,7 +258,7 @@ export class SnakeRenderer {
             y1: inputY[i],
             x2: outputX,
             y2: outputY[o],
-            weight: genome[wOffset + i],
+            weight: policy[wOffset + i],
             label: `${INPUT_LABELS[i]} -> ${OUTPUT_LABELS[o]}`,
           });
         }
@@ -412,7 +412,7 @@ export class SnakeRenderer {
       this.netCtx.fillStyle = "rgba(255, 255, 255, 0.65)";
       this.netCtx.font = "9px JetBrains Mono, monospace";
       this.netCtx.fillText(
-        `b=${genome[OFFSET_O_BIAS + o].toFixed(2)}`,
+        `b=${policy[OFFSET_O_BIAS + o].toFixed(2)}`,
         outputX + 12,
         outputY[o] + 14,
       );
@@ -608,7 +608,7 @@ export class SnakeRenderer {
     this.chartCtx.fillStyle = "rgba(255, 255, 255, 0.75)";
     this.chartCtx.font = "12px IBM Plex Mono, monospace";
     this.chartCtx.fillText(
-      `Update best fitness history (max ${maxFitness.toFixed(2)})`,
+      `PPO update best fitness history (max ${maxFitness.toFixed(2)})`,
       10,
       16,
     );
@@ -616,12 +616,12 @@ export class SnakeRenderer {
 
   private updateStats(state: TrainerState): void {
     this.stats.innerHTML = [
-      `PPO update: <strong>${state.generation}</strong>`,
-      `Alive in rollout: ${state.alive}/${state.populationSize}`,
+      `PPO update: <strong>${state.ppoUpdate}</strong>`,
+      `Alive: ${state.alive}/${state.rolloutBatchSize}`,
       `Grid: ${GRID_SIZE}x${GRID_SIZE}`,
       `Best score: ${state.bestEverScore}`,
       `Best fitness: ${state.bestEverFitness.toFixed(2)}`,
-      `Updates since best: ${state.staleGenerations}`,
+      `Updates since best: ${state.updatesSinceBest}`,
     ].join("<br>");
   }
 }

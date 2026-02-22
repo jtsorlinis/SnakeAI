@@ -17,11 +17,7 @@ export const CHART_HEIGHT = 140;
 export const MULTI_VIEW_COUNT = 25;
 export const MULTI_VIEW_COLUMNS = 5;
 
-export const POP_SIZE = 180;
-export const ELITE_COUNT = 8;
-export const TOURNAMENT_SIZE = 4;
-export const MUTATION_RATE = 0.08;
-export const MUTATION_SIZE = 0.35;
+export const ROLLOUT_BATCH_SIZE = 180;
 export const PPO_GAMMA = 1;
 export const PPO_GAE_LAMBDA = 0.95;
 export const PPO_CLIP_EPSILON = 0.2;
@@ -54,7 +50,7 @@ export let OFFSET_HH = 0;
 export let OFFSET_H_BIAS = 0;
 export let OFFSET_HO = 0;
 export let OFFSET_O_BIAS = 0;
-export let GENE_COUNT = 0;
+export let POLICY_PARAM_COUNT = 0;
 
 function recalculateGridConfig(): void {
   BOARD_SIZE = GRID_SIZE * TILE_SIZE;
@@ -95,7 +91,7 @@ function recalculateTopology(): void {
   OFFSET_H_BIAS = OFFSET_HH + HH_COUNT;
   OFFSET_HO = OFFSET_H_BIAS + H_BIAS_COUNT;
   OFFSET_O_BIAS = OFFSET_HO + HO_COUNT;
-  GENE_COUNT = OFFSET_O_BIAS + O_BIAS_COUNT;
+  POLICY_PARAM_COUNT = OFFSET_O_BIAS + O_BIAS_COUNT;
 }
 
 recalculateGridConfig();

@@ -1,5 +1,5 @@
 import {
-  GENE_COUNT,
+  POLICY_PARAM_COUNT,
   HIDDEN_LAYER_UNITS,
   HH_COUNT,
   H_BIAS_COUNT,
@@ -22,7 +22,7 @@ import {
   PPO_VALUE_COEFFICIENT,
   PPO_VALUE_LEARNING_RATE,
 } from "./config";
-import type { Genome } from "./types";
+import type { PolicyParams } from "./types";
 
 const EPSILON = 1e-8;
 const HIDDEN_LAYER_COUNT = HIDDEN_LAYER_UNITS.length;
@@ -151,9 +151,9 @@ type BatchData = {
 };
 
 export class PPOOptimizer {
-  private readonly policyParams = new Float32Array(GENE_COUNT);
+  private readonly policyParams = new Float32Array(POLICY_PARAM_COUNT);
   private readonly valueParams = new Float32Array(VALUE_PARAM_COUNT);
-  private readonly policyOptimizer = new AdamOptimizer(GENE_COUNT);
+  private readonly policyOptimizer = new AdamOptimizer(POLICY_PARAM_COUNT);
   private readonly valueOptimizer = new AdamOptimizer(VALUE_PARAM_COUNT);
 
   private readonly policyHiddenWeightOffsets = buildHiddenWeightOffsets(
@@ -175,7 +175,7 @@ export class PPOOptimizer {
   private readonly valueHiddenGrad = createHiddenBuffers();
   private readonly logits = new Float32Array(OUTPUTS);
   private readonly probabilities = new Float32Array(OUTPUTS);
-  private readonly policyGradient = new Float32Array(GENE_COUNT);
+  private readonly policyGradient = new Float32Array(POLICY_PARAM_COUNT);
   private readonly valueGradient = new Float32Array(VALUE_PARAM_COUNT);
   private readonly logitsGradient = new Float32Array(OUTPUTS);
   private readonly entropyGradientBuffer = new Float32Array(OUTPUTS);
@@ -191,7 +191,7 @@ export class PPOOptimizer {
     this.valueOptimizer.reset();
   }
 
-  public getPolicyGenome(): Genome {
+  public getPolicyParams(): PolicyParams {
     return this.policyParams;
   }
 

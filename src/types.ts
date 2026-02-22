@@ -1,9 +1,9 @@
 export type Point = { x: number; y: number };
 
-export type Genome = Float32Array;
+export type PolicyParams = Float32Array;
 
 export type Agent = {
-  genome: Genome;
+  policy: PolicyParams;
   body: Point[];
   dir: number;
   food: Point;
@@ -25,14 +25,14 @@ export type TrainerState = {
   boardAgent: Agent;
   boardAgents: readonly Agent[];
   fitnessHistory: readonly number[];
-  generation: number;
+  ppoUpdate: number;
   alive: number;
-  populationSize: number;
+  rolloutBatchSize: number;
   bestEverScore: number;
   bestEverFitness: number;
-  staleGenerations: number;
+  updatesSinceBest: number;
   network: {
-    genome: Genome | null;
+    policy: PolicyParams | null;
     activations: NetworkActivations | null;
   };
 };

@@ -9,7 +9,7 @@ import {
   OFFSET_O_BIAS,
   OUTPUTS,
 } from "./config";
-import type { Genome } from "./types";
+import type { PolicyParams } from "./types";
 
 function createHiddenLayerBuffers(): Float32Array[] {
   return HIDDEN_LAYER_UNITS.map((units) => new Float32Array(units));
@@ -18,12 +18,12 @@ function createHiddenLayerBuffers(): Float32Array[] {
 export class NeuralNetwork {
   private readonly actionHiddenBuffers = createHiddenLayerBuffers();
 
-  public chooseAction(genome: Genome, inputs: Float32Array): number {
-    return this.run(genome, inputs, this.actionHiddenBuffers);
+  public chooseAction(policy: PolicyParams, inputs: Float32Array): number {
+    return this.run(policy, inputs, this.actionHiddenBuffers);
   }
 
   public run(
-    genome: Genome,
+    policy: PolicyParams,
     inputs: Float32Array,
     hiddenTarget: Float32Array[],
     outputTarget?: Float32Array,
@@ -32,10 +32,10 @@ export class NeuralNetwork {
       const firstLayerSize = HIDDEN_LAYER_UNITS[0];
       const firstHidden = hiddenTarget[0];
       for (let h = 0; h < firstLayerSize; h++) {
-        let sum = genome[OFFSET_H_BIAS + h];
+        let sum = policy[OFFSET_H_BIAS + h];
         const wOffset = OFFSET_IH + h * INPUTS;
         for (let i = 0; i < INPUTS; i++) {
-          sum += genome[wOffset + i] * inputs[i];
+          sum += policy[wOffset + i] * inputs[i];
         }
         firstHidden[h] = Math.tanh(sum);
       }
@@ -49,10 +49,10 @@ export class NeuralNetwork {
         const currentSize = HIDDEN_LAYER_UNITS[layer];
 
         for (let h = 0; h < currentSize; h++) {
-          let sum = genome[biasOffset + h];
+          let sum = policy[biasOffset + h];
           const wOffset = hhOffset + h * prevSize;
           for (let k = 0; k < prevSize; k++) {
-            sum += genome[wOffset + k] * prev[k];
+            sum += policy[wOffset + k] * prev[k];
           }
           current[h] = Math.tanh(sum);
         }
@@ -70,10 +70,10 @@ export class NeuralNetwork {
       HIDDEN_LAYERS > 0 ? HIDDEN_LAYER_UNITS[HIDDEN_LAYERS - 1] : INPUTS;
 
     for (let output = 0; output < OUTPUTS; output++) {
-      let value = genome[OFFSET_O_BIAS + output];
+      let value = policy[OFFSET_O_BIAS + output];
       const wOffset = OFFSET_HO + output * outputInputSize;
       for (let h = 0; h < outputInputSize; h++) {
-        value += genome[wOffset + h] * outputInputs[h];
+        value += policy[wOffset + h] * outputInputs[h];
       }
 
       if (outputTarget) {

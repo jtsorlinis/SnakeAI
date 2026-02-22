@@ -7,7 +7,7 @@ import {
   OUTPUTS,
 } from "./config";
 import { NeuralNetwork, createNetworkHiddenBuffers } from "./NeuralNetwork";
-import type { Agent, Genome, NetworkActivations, Point } from "./types";
+import type { Agent, PolicyParams, NetworkActivations, Point } from "./types";
 
 export class SnakeEnvironment {
   private readonly actionInputs = new Float32Array(INPUTS);
@@ -17,7 +17,7 @@ export class SnakeEnvironment {
 
   constructor(private readonly network: NeuralNetwork) {}
 
-  public createAgent(genome: Genome): Agent {
+  public createAgent(policy: PolicyParams): Agent {
     const x = Math.floor(GRID_SIZE / 2);
     const y = Math.floor(GRID_SIZE / 2);
     const body = [
@@ -27,7 +27,7 @@ export class SnakeEnvironment {
     ];
 
     return {
-      genome: new Float32Array(genome),
+      policy: new Float32Array(policy),
       body,
       dir: 1,
       food: this.randomFood(body),
@@ -102,7 +102,7 @@ export class SnakeEnvironment {
   }
 
   public computeNetworkActivations(
-    genome: Genome,
+    policy: PolicyParams,
     agent: Agent | null,
   ): NetworkActivations {
     if (agent) {
@@ -112,7 +112,7 @@ export class SnakeEnvironment {
     }
 
     const best = this.network.run(
-      genome,
+      policy,
       this.vizInputs,
       this.vizHidden,
       this.vizOutputs,
@@ -231,6 +231,6 @@ export class SnakeEnvironment {
 
   private chooseAction(agent: Agent): number {
     this.senseInto(agent, this.actionInputs);
-    return this.network.chooseAction(agent.genome, this.actionInputs);
+    return this.network.chooseAction(agent.policy, this.actionInputs);
   }
 }
