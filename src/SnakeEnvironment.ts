@@ -2,6 +2,8 @@ import {
   BASE_HUNGER,
   DIRS,
   GRID_SIZE,
+  INPUT_CHANNEL_CELLS,
+  INPUT_GRID_SIZE,
   INPUTS,
   MAX_SCORE,
   OUTPUTS,
@@ -154,73 +156,47 @@ export class SnakeEnvironment {
     return x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE;
   }
 
-  private checkForObstacle(
-    head: Point,
-    direction: Point,
-    snake: Point[],
-  ): number {
-    const checkX = head.x + direction.x;
-    const checkY = head.y + direction.y;
-
-    if (this.outOfBounds(checkX, checkY)) {
-      return 1;
+  private scaleCoordinate(value: number): number {
+    if (GRID_SIZE <= 1) {
+      return 0;
     }
 
-    for (let i = 1; i < snake.length; i++) {
-      if (snake[i].x === checkX && snake[i].y === checkY) {
-        return 1;
-      }
-    }
-
-    return 0;
+    const ratio = value / (GRID_SIZE - 1);
+    return Math.max(
+      0,
+      Math.min(INPUT_GRID_SIZE - 1, Math.round(ratio * (INPUT_GRID_SIZE - 1))),
+    );
   }
 
-  private findTailDistance(
-    head: Point,
-    direction: Point,
-    snake: Point[],
-  ): number {
-    for (let distance = 1; distance <= GRID_SIZE; distance++) {
-      const x = head.x + direction.x * distance;
-      const y = head.y + direction.y * distance;
-
-      if (this.outOfBounds(x, y)) {
-        return 0;
-      }
-
-      for (let i = 1; i < snake.length; i++) {
-        if (snake[i].x === x && snake[i].y === y) {
-          return 1 / distance;
-        }
-      }
-    }
-
-    return 0;
-  }
-
-  private checkForFood(head: Point, direction: Point, food: Point): number {
-    const foodDeltaX = food.x - head.x;
-    const foodDeltaY = food.y - head.y;
-    const dot = foodDeltaX * direction.x + foodDeltaY * direction.y;
-    return Math.sign(dot);
+  private toInputCellIndex(point: Point): number {
+    const x = this.scaleCoordinate(point.x);
+    const y = this.scaleCoordinate(point.y);
+    return y * INPUT_GRID_SIZE + x;
   }
 
   private senseInto(agent: Agent, target: Float32Array): void {
-    const head = agent.body[0];
-    const front = DIRS[agent.dir];
-    const left = DIRS[(agent.dir + 3) % 4];
-    const right = DIRS[(agent.dir + 1) % 4];
+    target.fill(0);
 
-    target[0] = this.checkForObstacle(head, front, agent.body);
-    target[1] = this.checkForObstacle(head, left, agent.body);
-    target[2] = this.checkForObstacle(head, right, agent.body);
-    target[3] = this.findTailDistance(head, front, agent.body);
-    target[4] = this.findTailDistance(head, left, agent.body);
-    target[5] = this.findTailDistance(head, right, agent.body);
-    target[6] = this.checkForFood(head, front, agent.food);
-    target[7] = this.checkForFood(head, left, agent.food);
-    target[8] = front.x;
-    target[9] = front.y;
+    const head = agent.body[0]!;
+    const front = DIRS[agent.dir];
+
+    const headOffset = 0;
+    const bodyOffset = INPUT_CHANNEL_CELLS;
+    const foodOffset = INPUT_CHANNEL_CELLS * 2;
+    const directionOffset = INPUT_CHANNEL_CELLS * 3;
+
+    target[headOffset + this.toInputCellIndex(head)] = 1;
+
+    const bodyAgeDenominator = Math.max(1, agent.body.length - 1);
+    for (let i = 1; i < agent.body.length; i++) {
+      const ageNormalized = i / bodyAgeDenominator;
+      const bodyIndex = bodyOffset + this.toInputCellIndex(agent.body[i]!);
+      target[bodyIndex] = Math.max(target[bodyIndex], ageNormalized);
+    }
+
+    target[foodOffset + this.toInputCellIndex(agent.food)] = 1;
+    target[directionOffset] = front.x;
+    target[directionOffset + 1] = front.y;
   }
 
   private chooseAction(agent: Agent): number {

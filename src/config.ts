@@ -27,9 +27,11 @@ export let BASE_HUNGER = 0;
 export const NORMAL_STEPS_PER_SECOND = 15;
 export const TURBO_TIME_BUDGET_MS = 12;
 
-export const INPUTS = 10;
+export const INPUT_GRID_SIZE = 10;
+export const INPUT_CHANNEL_CELLS = INPUT_GRID_SIZE * INPUT_GRID_SIZE;
+export const INPUTS = INPUT_CHANNEL_CELLS * 3 + 2;
 export const OUTPUTS = 3;
-export const BASE_HIDDEN_UNITS = 8;
+export const BASE_HIDDEN_UNITS = 32;
 
 export const HIDDEN_LAYERS = 1;
 export let HIDDEN_LAYER_UNITS: number[] = [];
@@ -108,18 +110,32 @@ export function setGridSize(nextSize: number): number {
 
 export const NET_HOVER_RADIUS = 8;
 
-export const INPUT_LABELS = [
-  "Block Ahead",
-  "Block Left",
-  "Block Right",
-  "Tail Ahead",
-  "Tail Left",
-  "Tail Right",
-  "Food Ahead",
-  "Food Side",
-  "Dir X",
-  "Dir Y",
-] as const;
+function buildInputLabels(): string[] {
+  const labels: string[] = [];
+
+  for (let y = 0; y < INPUT_GRID_SIZE; y++) {
+    for (let x = 0; x < INPUT_GRID_SIZE; x++) {
+      labels.push(`Head [${x},${y}]`);
+    }
+  }
+
+  for (let y = 0; y < INPUT_GRID_SIZE; y++) {
+    for (let x = 0; x < INPUT_GRID_SIZE; x++) {
+      labels.push(`Body age [${x},${y}]`);
+    }
+  }
+
+  for (let y = 0; y < INPUT_GRID_SIZE; y++) {
+    for (let x = 0; x < INPUT_GRID_SIZE; x++) {
+      labels.push(`Food [${x},${y}]`);
+    }
+  }
+
+  labels.push("Dir X", "Dir Y");
+  return labels;
+}
+
+export const INPUT_LABELS = buildInputLabels();
 
 export const OUTPUT_LABELS = ["Straight", "Turn left", "Turn right"] as const;
 
