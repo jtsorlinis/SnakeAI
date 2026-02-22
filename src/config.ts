@@ -22,6 +22,16 @@ export const ELITE_COUNT = 8;
 export const TOURNAMENT_SIZE = 4;
 export const MUTATION_RATE = 0.08;
 export const MUTATION_SIZE = 0.35;
+export const PPO_GAMMA = 1;
+export const PPO_GAE_LAMBDA = 0.95;
+export const PPO_CLIP_EPSILON = 0.2;
+export const PPO_EPOCHS = 4;
+export const PPO_MINIBATCH_SIZE = 256;
+export const PPO_POLICY_LEARNING_RATE = 6e-4;
+export const PPO_VALUE_LEARNING_RATE = 1e-3;
+export const PPO_VALUE_COEFFICIENT = 0.5;
+export const PPO_ENTROPY_COEFFICIENT = 0.01;
+export const PPO_MAX_GRAD_NORM = 1;
 export let BASE_HUNGER = 0;
 
 export const NORMAL_STEPS_PER_SECOND = 15;

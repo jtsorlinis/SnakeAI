@@ -39,12 +39,18 @@ export class SnakeEnvironment {
     };
   }
 
-  public step(agent: Agent): void {
+  public observe(agent: Agent): Float32Array {
+    const observation = new Float32Array(INPUTS);
+    this.senseInto(agent, observation);
+    return observation;
+  }
+
+  public step(agent: Agent, actionOverride?: number): void {
     if (!agent.alive) {
       return;
     }
 
-    const action = this.chooseAction(agent);
+    const action = actionOverride ?? this.chooseAction(agent);
     switch (action) {
       case 1:
         agent.dir = (agent.dir + 3) % 4;

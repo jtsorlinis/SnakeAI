@@ -469,11 +469,17 @@ export class SnakeRenderer {
 
     const columns = Math.max(1, MULTI_VIEW_COLUMNS);
     const rows = Math.max(1, Math.ceil(agents.length / columns));
-    const gap = Math.max(2, Math.floor(Math.min(canvasWidth, canvasHeight) * 0.01));
+    const gap = Math.max(
+      2,
+      Math.floor(Math.min(canvasWidth, canvasHeight) * 0.01),
+    );
 
     const boardSizeByWidth = (canvasWidth - gap * (columns + 1)) / columns;
     const boardSizeByHeight = (canvasHeight - gap * (rows + 1)) / rows;
-    const cellSize = Math.max(8, Math.floor(Math.min(boardSizeByWidth, boardSizeByHeight)));
+    const cellSize = Math.max(
+      8,
+      Math.floor(Math.min(boardSizeByWidth, boardSizeByHeight)),
+    );
 
     const gridWidth = cellSize * columns + gap * (columns - 1);
     const gridHeight = cellSize * rows + gap * (rows - 1);
@@ -602,7 +608,7 @@ export class SnakeRenderer {
     this.chartCtx.fillStyle = "rgba(255, 255, 255, 0.75)";
     this.chartCtx.font = "12px IBM Plex Mono, monospace";
     this.chartCtx.fillText(
-      `Gen best fitness history (max ${maxFitness.toFixed(2)})`,
+      `Update best fitness history (max ${maxFitness.toFixed(2)})`,
       10,
       16,
     );
@@ -610,12 +616,12 @@ export class SnakeRenderer {
 
   private updateStats(state: TrainerState): void {
     this.stats.innerHTML = [
-      `Generation: <strong>${state.generation}</strong>`,
-      `Alive: ${state.alive}/${state.populationSize}`,
+      `PPO update: <strong>${state.generation}</strong>`,
+      `Alive in rollout: ${state.alive}/${state.populationSize}`,
       `Grid: ${GRID_SIZE}x${GRID_SIZE}`,
       `Best score: ${state.bestEverScore}`,
       `Best fitness: ${state.bestEverFitness.toFixed(2)}`,
-      `Stale: ${state.staleGenerations}`,
+      `Updates since best: ${state.staleGenerations}`,
     ].join("<br>");
   }
 }

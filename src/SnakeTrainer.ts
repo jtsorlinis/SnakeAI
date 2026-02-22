@@ -1,15 +1,17 @@
-import { POP_SIZE } from "./config";
-import { GeneticAlgorithm } from "./GeneticAlgorithm";
+import { GRID_SIZE, POP_SIZE } from "./config";
 import { NeuralNetwork } from "./NeuralNetwork";
+import { PPOOptimizer } from "./PPOOptimizer";
 import { SnakeEnvironment } from "./SnakeEnvironment";
 import type { Agent, Genome, TrainerState } from "./types";
+import type { PPOTransition } from "./PPOOptimizer";
 
 export class SnakeTrainer {
-  private readonly ga = new GeneticAlgorithm();
+  private readonly ppo = new PPOOptimizer();
   private readonly network = new NeuralNetwork();
   private readonly environment = new SnakeEnvironment(this.network);
 
   private population: Agent[] = [];
+  private trajectories: PPOTransition[][] = [];
   private generation = 1;
   private bestEverScore = 0;
   private bestEverFitness = 0;
@@ -26,7 +28,9 @@ export class SnakeTrainer {
   }
 
   public reset(): void {
+    this.ppo.reset();
     this.population = [];
+    this.trajectories = [];
     this.generation = 1;
     this.bestEverScore = 0;
     this.bestEverFitness = 0;
@@ -36,14 +40,10 @@ export class SnakeTrainer {
     this.showcaseAgent = null;
     this.invalidateRandomBoardAgents();
 
-    for (let i = 0; i < POP_SIZE; i++) {
-      this.population.push(
-        this.environment.createAgent(this.ga.randomGenome()),
-      );
-    }
+    this.initializePopulation();
 
     if (this.population.length > 0) {
-      this.setShowcaseGenome(this.population[0].genome);
+      this.setShowcaseGenome(this.ppo.getPolicyGenome());
     }
   }
 
@@ -51,12 +51,26 @@ export class SnakeTrainer {
     for (let i = 0; i < stepCount; i++) {
       let alive = 0;
 
-      for (const agent of this.population) {
+      for (let index = 0; index < this.population.length; index++) {
+        const agent = this.population[index];
         if (!agent.alive) {
           continue;
         }
 
-        this.environment.step(agent);
+        const observation = this.environment.observe(agent);
+        const sample = this.ppo.sampleAction(observation);
+        const previousScore = agent.score;
+        this.environment.step(agent, sample.action);
+
+        this.trajectories[index].push({
+          observation,
+          action: sample.action,
+          reward: this.computeReward(agent, previousScore),
+          done: !agent.alive,
+          logProb: sample.logProb,
+          value: sample.value,
+        });
+
         if (agent.alive) {
           alive += 1;
         }
@@ -110,9 +124,7 @@ export class SnakeTrainer {
   }
 
   public onGridSizeChanged(): void {
-    this.population = this.population.map((agent) =>
-      this.environment.createAgent(agent.genome),
-    );
+    this.initializePopulation();
 
     if (this.showcaseGenome) {
       this.showcaseAgent = this.environment.createAgent(this.showcaseGenome);
@@ -126,6 +138,17 @@ export class SnakeTrainer {
   private setShowcaseGenome(genome: Genome): void {
     this.showcaseGenome = new Float32Array(genome);
     this.showcaseAgent = this.environment.createAgent(this.showcaseGenome);
+  }
+
+  private initializePopulation(): void {
+    const policy = this.ppo.getPolicyGenome();
+    this.population = [];
+    this.trajectories = [];
+
+    for (let i = 0; i < POP_SIZE; i++) {
+      this.population.push(this.environment.createAgent(policy));
+      this.trajectories.push([]);
+    }
   }
 
   private invalidateRandomBoardAgents(): void {
@@ -200,7 +223,13 @@ export class SnakeTrainer {
   }
 
   private evolve(): void {
-    const { best, nextGenomes } = this.ga.evolve(this.population);
+    let best = this.population[0];
+    for (const agent of this.population) {
+      agent.fitness = this.fitness(agent);
+      if (agent.fitness > best.fitness) {
+        best = agent;
+      }
+    }
 
     this.bestEverScore = Math.max(this.bestEverScore, best.score);
     if (this.generation === 1 || best.fitness > this.bestEverFitness) {
@@ -214,10 +243,26 @@ export class SnakeTrainer {
       this.fitnessHistory.shift();
     }
 
-    this.population = nextGenomes.map((genome) =>
-      this.environment.createAgent(genome),
-    );
+    this.ppo.train(this.trajectories);
+
+    this.initializePopulation();
     this.generation += 1;
     this.invalidateRandomBoardAgents();
+  }
+
+  private computeReward(agent: Agent, previousScore: number): number {
+    let reward = agent.score - previousScore;
+    reward -= 1 / (GRID_SIZE * GRID_SIZE);
+    if (!agent.alive && agent.hunger > 0) {
+      reward -= 1;
+    }
+    return reward;
+  }
+
+  private fitness(agent: Agent): number {
+    const foodReward = agent.score;
+    const deathPenalty = !agent.alive && agent.hunger > 0 ? 1 : 0;
+    const stepPenalty = agent.steps / (GRID_SIZE * GRID_SIZE);
+    return foodReward - deathPenalty - stepPenalty;
   }
 }
