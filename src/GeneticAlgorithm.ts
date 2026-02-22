@@ -5,11 +5,8 @@ import {
   MUTATION_RATE,
   MUTATION_SIZE,
   POP_SIZE,
-  TOURNAMENT_SIZE,
 } from "./config";
 import type { Agent, Genome } from "./types";
-
-const TOURNAMENT_POOL_RATIO = 0.4;
 
 export type EvolutionResult = {
   best: Agent;
@@ -32,17 +29,14 @@ export class GeneticAlgorithm {
 
     const ranked = [...population].sort((a, b) => b.fitness - a.fitness);
     const nextGenomes: Genome[] = [];
+    const eliteCount = Math.min(ELITE_COUNT, ranked.length);
 
-    for (let i = 0; i < ELITE_COUNT; i++) {
-      nextGenomes.push(ranked[i].genome);
+    for (let i = 0; i < eliteCount; i++) {
+      nextGenomes.push(new Float32Array(ranked[i].genome));
     }
 
     while (nextGenomes.length < POP_SIZE) {
-      const parentA = this.pickParent(ranked);
-      const parentB = this.pickParent(ranked);
-      const child = this.crossover(parentA.genome, parentB.genome);
-      this.mutate(child);
-      nextGenomes.push(child);
+      nextGenomes.push(this.spawnChild(ranked, eliteCount));
     }
 
     return {
@@ -55,10 +49,6 @@ export class GeneticAlgorithm {
     return min + Math.random() * (max - min);
   }
 
-  private randomIndex(maxExclusive: number): number {
-    return Math.floor(Math.random() * maxExclusive);
-  }
-
   private fitness(agent: Agent): number {
     const foodReward = agent.score;
     const deathPenalty = !agent.alive && agent.hunger > 0 ? 1 : 0;
@@ -66,15 +56,7 @@ export class GeneticAlgorithm {
     return foodReward - deathPenalty - stepPenalty;
   }
 
-  private crossover(a: Genome, b: Genome): Genome {
-    const child = new Float32Array(GENE_COUNT);
-    for (let i = 0; i < GENE_COUNT; i++) {
-      child[i] = Math.random() < 0.5 ? a[i] : b[i];
-    }
-    return child;
-  }
-
-  private mutate(genome: Genome): void {
+  private mutateInPlace(genome: Genome): void {
     for (let i = 0; i < genome.length; i++) {
       if (Math.random() < MUTATION_RATE) {
         genome[i] += this.randomRange(-MUTATION_SIZE, MUTATION_SIZE);
@@ -82,20 +64,10 @@ export class GeneticAlgorithm {
     }
   }
 
-  private pickParent(ranked: Agent[]): Agent {
-    const poolSize = Math.max(
-      2,
-      Math.floor(ranked.length * TOURNAMENT_POOL_RATIO),
-    );
-    let winner = ranked[this.randomIndex(poolSize)];
-
-    for (let i = 1; i < TOURNAMENT_SIZE; i++) {
-      const challenger = ranked[this.randomIndex(poolSize)];
-      if (challenger.fitness > winner.fitness) {
-        winner = challenger;
-      }
-    }
-
-    return winner;
+  private spawnChild(ranked: Agent[], eliteCount: number): Genome {
+    const parent = ranked[Math.floor(Math.random() * eliteCount)];
+    const child = new Float32Array(parent.genome);
+    this.mutateInPlace(child);
+    return child;
   }
 }
