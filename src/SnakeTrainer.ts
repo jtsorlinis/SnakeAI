@@ -1,11 +1,10 @@
-import { POP_SIZE } from "./config";
-import { GeneticAlgorithm } from "./GeneticAlgorithm";
+import { CMAESOptimizer } from "./CMAESOptimizer";
 import { NeuralNetwork } from "./NeuralNetwork";
 import { SnakeEnvironment } from "./SnakeEnvironment";
 import type { Agent, Genome, TrainerState } from "./types";
 
 export class SnakeTrainer {
-  private readonly ga = new GeneticAlgorithm();
+  private readonly optimizer = new CMAESOptimizer();
   private readonly network = new NeuralNetwork();
   private readonly environment = new SnakeEnvironment(this.network);
 
@@ -27,6 +26,7 @@ export class SnakeTrainer {
 
   public reset(): void {
     this.population = [];
+    this.optimizer.reset();
     this.generation = 1;
     this.bestEverScore = 0;
     this.bestEverFitness = 0;
@@ -36,10 +36,9 @@ export class SnakeTrainer {
     this.showcaseAgent = null;
     this.invalidateRandomBoardAgents();
 
-    for (let i = 0; i < POP_SIZE; i++) {
-      this.population.push(
-        this.environment.createAgent(this.ga.randomGenome()),
-      );
+    const initialGenomes = this.optimizer.samplePopulation();
+    for (const genome of initialGenomes) {
+      this.population.push(this.environment.createAgent(genome));
     }
 
     if (this.population.length > 0) {
@@ -101,7 +100,7 @@ export class SnakeTrainer {
       fitnessHistory: this.fitnessHistory,
       generation: this.generation,
       alive,
-      populationSize: POP_SIZE,
+      populationSize: this.population.length,
       bestEverScore: this.bestEverScore,
       bestEverFitness: this.bestEverFitness,
       staleGenerations: Math.max(0, this.generation - this.bestFitnessGen),
@@ -200,7 +199,7 @@ export class SnakeTrainer {
   }
 
   private evolve(): void {
-    const { best, nextGenomes } = this.ga.evolve(this.population);
+    const { best, nextGenomes } = this.optimizer.evolve(this.population);
 
     this.bestEverScore = Math.max(this.bestEverScore, best.score);
     if (this.generation === 1 || best.fitness > this.bestEverFitness) {
