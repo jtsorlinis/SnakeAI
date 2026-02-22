@@ -1,5 +1,13 @@
-import { POP_SIZE } from "./config";
-import { GeneticAlgorithm } from "./GeneticAlgorithm";
+import {
+  EPISODES_PER_GENOME_LATE,
+  EPISODES_PER_GENOME_START,
+  EPISODES_PER_GENOME_SWITCH_GENERATION,
+  POP_SIZE,
+} from "./config";
+import {
+  GeneticAlgorithm,
+  type EvolutionCandidate,
+} from "./GeneticAlgorithm";
 import { NeuralNetwork } from "./NeuralNetwork";
 import { SnakeEnvironment } from "./SnakeEnvironment";
 import type { Agent, Genome, TrainerState } from "./types";
@@ -15,6 +23,11 @@ export class SnakeTrainer {
   private bestEverFitness = 0;
   private bestFitnessGen = 1;
   private fitnessHistory: number[] = [];
+  private evaluationEpisode = 1;
+  private evaluationEpisodeTarget = EPISODES_PER_GENOME_START;
+  private evaluationFitnessSums: number[] = [];
+  private evaluationScoreSums: number[] = [];
+  private evaluationBestScores: number[] = [];
 
   private showcaseGenome: Genome | null = null;
   private showcaseAgent: Agent | null = null;
@@ -45,6 +58,8 @@ export class SnakeTrainer {
     if (this.population.length > 0) {
       this.setShowcaseGenome(this.population[0].genome);
     }
+
+    this.beginGenerationEvaluation();
   }
 
   public simulate(stepCount: number): void {
@@ -63,7 +78,7 @@ export class SnakeTrainer {
       }
 
       if (alive === 0) {
-        this.evolve();
+        this.finishEpisode();
       }
 
       if (this.showcaseAgent) {
@@ -100,6 +115,8 @@ export class SnakeTrainer {
       boardAgents: this.getRandomBoardAgents(randomBoardCount),
       fitnessHistory: this.fitnessHistory,
       generation: this.generation,
+      evaluationEpisode: this.evaluationEpisode,
+      evaluationEpisodeTarget: this.evaluationEpisodeTarget,
       alive,
       populationSize: POP_SIZE,
       bestEverScore: this.bestEverScore,
@@ -120,6 +137,7 @@ export class SnakeTrainer {
       this.showcaseAgent = null;
     }
 
+    this.beginGenerationEvaluation();
     this.invalidateRandomBoardAgents();
   }
 
@@ -131,6 +149,59 @@ export class SnakeTrainer {
   private invalidateRandomBoardAgents(): void {
     this.randomBoardAgents = [];
     this.randomBoardGeneration = -1;
+  }
+
+  private episodesPerGenomeForGeneration(generation: number): number {
+    if (generation >= EPISODES_PER_GENOME_SWITCH_GENERATION) {
+      return EPISODES_PER_GENOME_LATE;
+    }
+
+    return EPISODES_PER_GENOME_START;
+  }
+
+  private beginGenerationEvaluation(): void {
+    this.evaluationEpisode = 1;
+    this.evaluationEpisodeTarget = this.episodesPerGenomeForGeneration(
+      this.generation,
+    );
+    this.evaluationFitnessSums = new Array(this.population.length).fill(0);
+    this.evaluationScoreSums = new Array(this.population.length).fill(0);
+    this.evaluationBestScores = new Array(this.population.length).fill(0);
+  }
+
+  private accumulateEpisodeResults(): void {
+    for (let i = 0; i < this.population.length; i++) {
+      const agent = this.population[i]!;
+      this.evaluationFitnessSums[i] += this.ga.evaluateFitness(agent);
+      this.evaluationScoreSums[i] += agent.score;
+      this.evaluationBestScores[i] = Math.max(
+        this.evaluationBestScores[i],
+        agent.score,
+      );
+    }
+  }
+
+  private finishEpisode(): void {
+    this.accumulateEpisodeResults();
+
+    if (this.evaluationEpisode < this.evaluationEpisodeTarget) {
+      this.evaluationEpisode += 1;
+      this.population = this.population.map((agent) =>
+        this.environment.createAgent(agent.genome),
+      );
+      this.invalidateRandomBoardAgents();
+      return;
+    }
+
+    this.evolveGeneration();
+  }
+
+  private buildEvolutionCandidates(): EvolutionCandidate[] {
+    return this.population.map((agent, index) => ({
+      genome: agent.genome,
+      fitness: this.evaluationFitnessSums[index] / this.evaluationEpisodeTarget,
+      score: this.evaluationScoreSums[index] / this.evaluationEpisodeTarget,
+    }));
   }
 
   private sampleAgents(candidates: Agent[], sampleCount: number): Agent[] {
@@ -199,10 +270,15 @@ export class SnakeTrainer {
     return this.randomBoardAgents;
   }
 
-  private evolve(): void {
-    const { best, nextGenomes } = this.ga.evolve(this.population);
+  private evolveGeneration(): void {
+    const candidates = this.buildEvolutionCandidates();
+    const { best, nextGenomes } = this.ga.evolve(candidates, this.generation);
+    const generationBestScore = this.evaluationBestScores.reduce(
+      (max, score) => Math.max(max, score),
+      0,
+    );
 
-    this.bestEverScore = Math.max(this.bestEverScore, best.score);
+    this.bestEverScore = Math.max(this.bestEverScore, generationBestScore);
     if (this.generation === 1 || best.fitness > this.bestEverFitness) {
       this.bestEverFitness = best.fitness;
       this.bestFitnessGen = this.generation;
@@ -218,6 +294,7 @@ export class SnakeTrainer {
       this.environment.createAgent(genome),
     );
     this.generation += 1;
+    this.beginGenerationEvaluation();
     this.invalidateRandomBoardAgents();
   }
 }

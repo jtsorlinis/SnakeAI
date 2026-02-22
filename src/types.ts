@@ -26,6 +26,8 @@ export type TrainerState = {
   boardAgents: readonly Agent[];
   fitnessHistory: readonly number[];
   generation: number;
+  evaluationEpisode: number;
+  evaluationEpisodeTarget: number;
   alive: number;
   populationSize: number;
   bestEverScore: number;

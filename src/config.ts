@@ -18,10 +18,16 @@ export const MULTI_VIEW_COUNT = 25;
 export const MULTI_VIEW_COLUMNS = 5;
 
 export const POP_SIZE = 180;
-export const ELITE_COUNT = 8;
-export const TOURNAMENT_SIZE = 4;
+export const ELITE_RATIO = 0.08;
+export const TOURNAMENT_SIZE = 5;
+export const CROSSOVER_RATE = 0.05;
 export const MUTATION_RATE = 0.08;
-export const MUTATION_SIZE = 0.35;
+export const MUTATION_SIGMA_START = 0.25;
+export const MUTATION_SIGMA_DECAY = 0.997;
+export const MUTATION_SIGMA_MIN = 0.05;
+export const EPISODES_PER_GENOME_START = 3;
+export const EPISODES_PER_GENOME_LATE = 5;
+export const EPISODES_PER_GENOME_SWITCH_GENERATION = 150;
 export let BASE_HUNGER = 0;
 
 export const NORMAL_STEPS_PER_SECOND = 15;

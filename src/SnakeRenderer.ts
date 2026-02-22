@@ -611,6 +611,7 @@ export class SnakeRenderer {
   private updateStats(state: TrainerState): void {
     this.stats.innerHTML = [
       `Generation: <strong>${state.generation}</strong>`,
+      `Eval episode: ${state.evaluationEpisode}/${state.evaluationEpisodeTarget}`,
       `Alive: ${state.alive}/${state.populationSize}`,
       `Grid: ${GRID_SIZE}x${GRID_SIZE}`,
       `Best score: ${state.bestEverScore}`,

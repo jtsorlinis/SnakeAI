@@ -1,22 +1,31 @@
 import {
-  ELITE_COUNT,
+  CROSSOVER_RATE,
+  ELITE_RATIO,
   GENE_COUNT,
   GRID_SIZE,
   MUTATION_RATE,
-  MUTATION_SIZE,
-  POP_SIZE,
+  MUTATION_SIGMA_DECAY,
+  MUTATION_SIGMA_MIN,
+  MUTATION_SIGMA_START,
   TOURNAMENT_SIZE,
 } from "./config";
 import type { Agent, Genome } from "./types";
 
-const TOURNAMENT_POOL_RATIO = 0.4;
+export type EvolutionCandidate = {
+  genome: Genome;
+  fitness: number;
+  score: number;
+};
 
 export type EvolutionResult = {
-  best: Agent;
+  best: EvolutionCandidate;
   nextGenomes: Genome[];
 };
 
 export class GeneticAlgorithm {
+  private hasSpareGaussian = false;
+  private spareGaussian = 0;
+
   public randomGenome(): Genome {
     const genome = new Float32Array(GENE_COUNT);
     for (let i = 0; i < genome.length; i++) {
@@ -25,23 +34,61 @@ export class GeneticAlgorithm {
     return genome;
   }
 
-  public evolve(population: Agent[]): EvolutionResult {
-    for (const agent of population) {
-      agent.fitness = this.fitness(agent);
+  public evaluateFitness(agent: Agent): number {
+    const area = GRID_SIZE * GRID_SIZE;
+    const score = agent.score;
+    const steps = agent.steps;
+
+    // Strong reward for food (quadratic term helps push beyond "1-2 food" local optima)
+    const foodReward = 20 * score + 10 * score * score;
+
+    // Small early survival reward (capped so looping forever doesn't dominate)
+    const survivalBonus = 0.005 * Math.min(steps, area);
+
+    // Penalize taking too long relative to achieved score
+    // (more score buys more "allowed" steps)
+    const expectedSteps = 0.25 * area + 0.5 * area * score;
+    const stallingPenalty = 0.01 * Math.max(0, steps - expectedSteps);
+
+    // Death type penalties (starvation should hurt more than collision)
+    const collided = !agent.alive && agent.hunger > 0;
+    const starved = !agent.alive && agent.hunger === 0;
+
+    const collisionPenalty = collided ? 2 : 0;
+    const starvationPenalty = starved ? 8 : 0;
+
+    return (
+      foodReward +
+      survivalBonus -
+      stallingPenalty -
+      collisionPenalty -
+      starvationPenalty
+    );
+  }
+
+  public evolve(
+    population: readonly EvolutionCandidate[],
+    generation: number,
+  ): EvolutionResult {
+    if (population.length === 0) {
+      throw new Error("Cannot evolve an empty population");
     }
 
     const ranked = [...population].sort((a, b) => b.fitness - a.fitness);
     const nextGenomes: Genome[] = [];
+    const targetSize = population.length;
+    const eliteCount = Math.max(1, Math.round(targetSize * ELITE_RATIO));
+    const mutationSigma = this.mutationSigma(generation);
 
-    for (let i = 0; i < ELITE_COUNT; i++) {
-      nextGenomes.push(ranked[i].genome);
+    for (let i = 0; i < Math.min(eliteCount, targetSize); i++) {
+      nextGenomes.push(new Float32Array(ranked[i].genome));
     }
 
-    while (nextGenomes.length < POP_SIZE) {
+    while (nextGenomes.length < targetSize) {
       const parentA = this.pickParent(ranked);
       const parentB = this.pickParent(ranked);
-      const child = this.crossover(parentA.genome, parentB.genome);
-      this.mutate(child);
+      const child = this.makeChild(parentA.genome, parentB.genome);
+      this.mutate(child, mutationSigma);
       nextGenomes.push(child);
     }
 
@@ -59,11 +106,21 @@ export class GeneticAlgorithm {
     return Math.floor(Math.random() * maxExclusive);
   }
 
-  private fitness(agent: Agent): number {
-    const foodReward = agent.score;
-    const deathPenalty = !agent.alive && agent.hunger > 0 ? 1 : 0;
-    const stepPenalty = agent.steps / (GRID_SIZE * GRID_SIZE);
-    return foodReward - deathPenalty - stepPenalty;
+  private mutationSigma(generation: number): number {
+    const generationNumber = Math.max(1, generation);
+    return Math.max(
+      MUTATION_SIGMA_MIN,
+      MUTATION_SIGMA_START *
+        Math.pow(MUTATION_SIGMA_DECAY, generationNumber - 1),
+    );
+  }
+
+  private makeChild(a: Genome, b: Genome): Genome {
+    if (Math.random() >= CROSSOVER_RATE) {
+      return new Float32Array(a);
+    }
+
+    return this.crossover(a, b);
   }
 
   private crossover(a: Genome, b: Genome): Genome {
@@ -74,23 +131,44 @@ export class GeneticAlgorithm {
     return child;
   }
 
-  private mutate(genome: Genome): void {
+  private mutate(genome: Genome, sigma: number): void {
     for (let i = 0; i < genome.length; i++) {
       if (Math.random() < MUTATION_RATE) {
-        genome[i] += this.randomRange(-MUTATION_SIZE, MUTATION_SIZE);
+        genome[i] += this.randomGaussian(0, sigma);
       }
     }
   }
 
-  private pickParent(ranked: Agent[]): Agent {
-    const poolSize = Math.max(
-      2,
-      Math.floor(ranked.length * TOURNAMENT_POOL_RATIO),
-    );
-    let winner = ranked[this.randomIndex(poolSize)];
+  private randomGaussian(mean: number, standardDeviation: number): number {
+    if (this.hasSpareGaussian) {
+      this.hasSpareGaussian = false;
+      return mean + standardDeviation * this.spareGaussian;
+    }
+
+    let u = 0;
+    let v = 0;
+    let magnitude = 0;
+
+    do {
+      u = this.randomRange(-1, 1);
+      v = this.randomRange(-1, 1);
+      magnitude = u * u + v * v;
+    } while (magnitude <= Number.EPSILON || magnitude >= 1);
+
+    const factor = Math.sqrt((-2 * Math.log(magnitude)) / magnitude);
+    this.spareGaussian = v * factor;
+    this.hasSpareGaussian = true;
+
+    return mean + standardDeviation * (u * factor);
+  }
+
+  private pickParent(
+    ranked: readonly EvolutionCandidate[],
+  ): EvolutionCandidate {
+    let winner = ranked[this.randomIndex(ranked.length)];
 
     for (let i = 1; i < TOURNAMENT_SIZE; i++) {
-      const challenger = ranked[this.randomIndex(poolSize)];
+      const challenger = ranked[this.randomIndex(ranked.length)];
       if (challenger.fitness > winner.fitness) {
         winner = challenger;
       }
