@@ -10,6 +10,7 @@ export type Agent = {
   alive: boolean;
   score: number;
   steps: number;
+  stepsSinceFood: number;
   hunger: number;
   fitness: number;
 };

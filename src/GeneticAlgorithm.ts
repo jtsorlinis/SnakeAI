@@ -37,18 +37,18 @@ export class GeneticAlgorithm {
   public evaluateFitness(agent: Agent): number {
     const area = GRID_SIZE * GRID_SIZE;
     const score = agent.score;
-    const steps = agent.steps;
 
-    // Strong reward for food (quadratic term helps push beyond "1-2 food" local optima)
+    // Main objective: getting food (quadratic term helps push past low-score plateaus)
     const foodReward = 20 * score + 10 * score * score;
 
-    // Small early survival reward (capped so looping forever doesn't dominate)
-    const survivalBonus = 0.005 * Math.min(steps, area);
+    // Small survival bonus (capped so "just living" can't dominate)
+    const survivalBonus = 0.005 * Math.min(agent.steps, area);
 
-    // Penalize taking too long relative to achieved score
-    // (more score buys more "allowed" steps)
-    const expectedSteps = 0.25 * area + 0.5 * area * score;
-    const stallingPenalty = 0.01 * Math.max(0, steps - expectedSteps);
+    // Penalize stalling (time since last food), grows faster the longer it stalls
+    const stallLinear = 0.02 * agent.stepsSinceFood;
+    const stallQuadratic =
+      0.01 * (agent.stepsSinceFood * agent.stepsSinceFood) / area;
+    const stallPenalty = stallLinear + stallQuadratic;
 
     // Death type penalties (starvation should hurt more than collision)
     const collided = !agent.alive && agent.hunger > 0;
@@ -60,7 +60,7 @@ export class GeneticAlgorithm {
     return (
       foodReward +
       survivalBonus -
-      stallingPenalty -
+      stallPenalty -
       collisionPenalty -
       starvationPenalty
     );

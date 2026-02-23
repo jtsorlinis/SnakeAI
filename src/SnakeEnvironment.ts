@@ -36,6 +36,7 @@ export class SnakeEnvironment {
       alive: true,
       score: 0,
       steps: 0,
+      stepsSinceFood: 0,
       hunger: BASE_HUNGER,
       fitness: 0,
     };
@@ -61,6 +62,7 @@ export class SnakeEnvironment {
     const next = { x: head.x + move.x, y: head.y + move.y };
 
     agent.steps += 1;
+    agent.stepsSinceFood += 1;
     agent.hunger -= 1;
 
     if (this.outOfBounds(next.x, next.y)) {
@@ -79,6 +81,7 @@ export class SnakeEnvironment {
     agent.body.unshift(next);
 
     if (ate) {
+      agent.stepsSinceFood = 0;
       agent.score += 1;
 
       if (agent.score >= MAX_SCORE) {
