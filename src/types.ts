@@ -25,12 +25,15 @@ export type TrainerState = {
   boardAgent: Agent;
   boardAgents: readonly Agent[];
   fitnessHistory: readonly number[];
-  ppoUpdate: number;
+  dqnUpdate: number;
   alive: number;
   rolloutBatchSize: number;
   bestEverScore: number;
   bestEverFitness: number;
   updatesSinceBest: number;
+  epsilon: number;
+  replaySize: number;
+  loss: number;
   network: {
     policy: PolicyParams | null;
     activations: NetworkActivations | null;

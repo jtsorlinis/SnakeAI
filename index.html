@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Snake PPO Trainer</title>
+    <title>Snake DQN Trainer</title>
   </head>
   <body>
     <main id="app">
       <canvas id="netCanvas" aria-label="Left visualization"></canvas>
       <canvas id="gameCanvas" aria-label="Snake board"></canvas>
       <section class="panel">
-        <h1>Snake PPO Trainer</h1>
+        <h1>Snake DQN Trainer</h1>
         <div id="stats" class="stats">Training...</div>
         <div class="toggle-row">
           <input id="turboToggle" type="checkbox" />
@@ -45,7 +45,7 @@
             </div>
           </div>
         </div>
-        <canvas id="chartCanvas" aria-label="PPO update history"></canvas>
+        <canvas id="chartCanvas" aria-label="DQN update history"></canvas>
       </section>
     </main>
     <script type="module" src="/src/main.ts"></script>

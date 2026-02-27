@@ -18,16 +18,17 @@ export const MULTI_VIEW_COUNT = 25;
 export const MULTI_VIEW_COLUMNS = 5;
 
 export const ROLLOUT_BATCH_SIZE = 180;
-export const PPO_GAMMA = 1;
-export const PPO_GAE_LAMBDA = 0.95;
-export const PPO_CLIP_EPSILON = 0.2;
-export const PPO_EPOCHS = 4;
-export const PPO_MINIBATCH_SIZE = 256;
-export const PPO_POLICY_LEARNING_RATE = 6e-4;
-export const PPO_VALUE_LEARNING_RATE = 1e-3;
-export const PPO_VALUE_COEFFICIENT = 0.5;
-export const PPO_ENTROPY_COEFFICIENT = 0.01;
-export const PPO_MAX_GRAD_NORM = 1;
+export const DQN_GAMMA = 0.999;
+export const DQN_BATCH_SIZE = 256;
+export const DQN_LEARNING_RATE = 6e-4;
+export const DQN_REPLAY_CAPACITY = 60_000;
+export const DQN_MIN_REPLAY_SIZE = 4_000;
+export const DQN_TRAINING_STEPS_PER_UPDATE = 180;
+export const DQN_TARGET_UPDATE_INTERVAL = 200;
+export const DQN_MAX_GRAD_NORM = 1;
+export const DQN_EPSILON_START = 1;
+export const DQN_EPSILON_END = 0.02;
+export const DQN_EPSILON_DECAY_STEPS = 250_000;
 export let BASE_HUNGER = 0;
 
 export const NORMAL_STEPS_PER_SECOND = 15;

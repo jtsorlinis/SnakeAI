@@ -1,41 +1,53 @@
-import { GRID_SIZE, ROLLOUT_BATCH_SIZE } from "./config";
+import {
+  DQN_EPSILON_DECAY_STEPS,
+  DQN_EPSILON_END,
+  DQN_EPSILON_START,
+  DQN_TRAINING_STEPS_PER_UPDATE,
+  GRID_SIZE,
+  ROLLOUT_BATCH_SIZE,
+} from "./config";
+import { DQNOptimizer } from "./DQNOptimizer";
 import { NeuralNetwork } from "./NeuralNetwork";
-import { PPOOptimizer } from "./PPOOptimizer";
 import { SnakeEnvironment } from "./SnakeEnvironment";
 import type { Agent, PolicyParams, TrainerState } from "./types";
-import type { PPOTransition } from "./PPOOptimizer";
 
 export class SnakeTrainer {
-  private readonly ppo = new PPOOptimizer();
+  private readonly dqn = new DQNOptimizer();
   private readonly network = new NeuralNetwork();
   private readonly environment = new SnakeEnvironment(this.network);
 
   private rolloutAgents: Agent[] = [];
-  private trajectories: PPOTransition[][] = [];
-  private ppoUpdate = 1;
+  private dqnUpdate = 1;
   private bestEverScore = 0;
   private bestEverFitness = 0;
   private bestFitnessUpdate = 1;
   private fitnessHistory: number[] = [];
+  private epsilon = DQN_EPSILON_START;
+  private replaySize = 0;
+  private lastTrainingLoss = 0;
+  private totalEnvSteps = 0;
 
   private showcasePolicy: PolicyParams | null = null;
   private showcaseAgent: Agent | null = null;
   private randomBoardAgents: Agent[] = [];
-  private randomBoardPpoUpdate = -1;
+  private randomBoardDqnUpdate = -1;
 
   constructor() {
     this.reset();
   }
 
   public reset(): void {
-    this.ppo.reset();
+    this.dqn.reset();
     this.rolloutAgents = [];
-    this.trajectories = [];
-    this.ppoUpdate = 1;
+    this.dqnUpdate = 1;
     this.bestEverScore = 0;
     this.bestEverFitness = 0;
     this.bestFitnessUpdate = 1;
     this.fitnessHistory = [];
+    this.epsilon = DQN_EPSILON_START;
+    this.replaySize = 0;
+    this.lastTrainingLoss = 0;
+    this.totalEnvSteps = 0;
     this.showcasePolicy = null;
     this.showcaseAgent = null;
     this.invalidateRandomBoardAgents();
@@ -43,33 +55,37 @@ export class SnakeTrainer {
     this.initializeRolloutBatch();
 
     if (this.rolloutAgents.length > 0) {
-      this.setShowcasePolicy(this.ppo.getPolicyParams());
+      this.setShowcasePolicy(this.dqn.getPolicyParams());
     }
   }
 
   public simulate(stepCount: number): void {
     for (let i = 0; i < stepCount; i++) {
+      this.epsilon = this.explorationRate();
       let alive = 0;
 
-      for (let index = 0; index < this.rolloutAgents.length; index++) {
-        const agent = this.rolloutAgents[index];
+      for (const agent of this.rolloutAgents) {
         if (!agent.alive) {
           continue;
         }
 
         const observation = this.environment.observe(agent);
-        const sample = this.ppo.sampleAction(observation);
+        const sample = this.dqn.sampleAction(observation, this.epsilon);
         const previousScore = agent.score;
         this.environment.step(agent, sample.action);
+        const done = !agent.alive;
+        const nextObservation = done
+          ? observation
+          : this.environment.observe(agent);
 
-        this.trajectories[index].push({
+        this.dqn.addTransition({
           observation,
           action: sample.action,
           reward: this.computeReward(agent, previousScore),
-          done: !agent.alive,
-          logProb: sample.logProb,
-          value: sample.value,
+          nextObservation,
+          done,
         });
+        this.totalEnvSteps += 1;
 
         if (agent.alive) {
           alive += 1;
@@ -77,7 +93,7 @@ export class SnakeTrainer {
       }
 
       if (alive === 0) {
-        this.runPpoUpdate();
+        this.runDqnUpdate();
       }
 
       if (this.showcaseAgent) {
@@ -88,6 +104,8 @@ export class SnakeTrainer {
         this.showcaseAgent = this.environment.createAgent(this.showcasePolicy);
       }
     }
+
+    this.replaySize = this.dqn.getReplaySize();
   }
 
   public getState(randomBoardCount = 0): TrainerState {
@@ -113,12 +131,15 @@ export class SnakeTrainer {
       boardAgent,
       boardAgents: this.getRandomBoardAgents(randomBoardCount),
       fitnessHistory: this.fitnessHistory,
-      ppoUpdate: this.ppoUpdate,
+      dqnUpdate: this.dqnUpdate,
       alive,
       rolloutBatchSize: ROLLOUT_BATCH_SIZE,
       bestEverScore: this.bestEverScore,
       bestEverFitness: this.bestEverFitness,
-      updatesSinceBest: Math.max(0, this.ppoUpdate - this.bestFitnessUpdate),
+      updatesSinceBest: Math.max(0, this.dqnUpdate - this.bestFitnessUpdate),
+      epsilon: this.epsilon,
+      replaySize: this.replaySize,
+      loss: this.lastTrainingLoss,
       network,
     };
   }
@@ -141,19 +162,17 @@ export class SnakeTrainer {
   }
 
   private initializeRolloutBatch(): void {
-    const policy = this.ppo.getPolicyParams();
+    const policy = this.dqn.getPolicyParams();
     this.rolloutAgents = [];
-    this.trajectories = [];
 
     for (let i = 0; i < ROLLOUT_BATCH_SIZE; i++) {
       this.rolloutAgents.push(this.environment.createAgent(policy));
-      this.trajectories.push([]);
     }
   }
 
   private invalidateRandomBoardAgents(): void {
     this.randomBoardAgents = [];
-    this.randomBoardPpoUpdate = -1;
+    this.randomBoardDqnUpdate = -1;
   }
 
   private sampleAgents(candidates: Agent[], sampleCount: number): Agent[] {
@@ -176,7 +195,7 @@ export class SnakeTrainer {
     }
 
     const requiredCount = Math.min(randomBoardCount, this.rolloutAgents.length);
-    const updateChanged = this.randomBoardPpoUpdate !== this.ppoUpdate;
+    const updateChanged = this.randomBoardDqnUpdate !== this.dqnUpdate;
     const sizeChanged = this.randomBoardAgents.length !== requiredCount;
 
     if (updateChanged || sizeChanged) {
@@ -195,7 +214,7 @@ export class SnakeTrainer {
       } else {
         this.randomBoardAgents = aliveFirst;
       }
-      this.randomBoardPpoUpdate = this.ppoUpdate;
+      this.randomBoardDqnUpdate = this.dqnUpdate;
     }
 
     const currentlyAlive = new Set(
@@ -222,7 +241,7 @@ export class SnakeTrainer {
     return this.randomBoardAgents;
   }
 
-  private runPpoUpdate(): void {
+  private runDqnUpdate(): void {
     let best = this.rolloutAgents[0];
     for (const agent of this.rolloutAgents) {
       agent.fitness = this.fitness(agent);
@@ -232,9 +251,9 @@ export class SnakeTrainer {
     }
 
     this.bestEverScore = Math.max(this.bestEverScore, best.score);
-    if (this.ppoUpdate === 1 || best.fitness > this.bestEverFitness) {
+    if (this.dqnUpdate === 1 || best.fitness > this.bestEverFitness) {
       this.bestEverFitness = best.fitness;
-      this.bestFitnessUpdate = this.ppoUpdate;
+      this.bestFitnessUpdate = this.dqnUpdate;
       this.setShowcasePolicy(best.policy);
     }
 
@@ -243,11 +262,19 @@ export class SnakeTrainer {
       this.fitnessHistory.shift();
     }
 
-    this.ppo.train(this.trajectories);
+    const stats = this.dqn.train(DQN_TRAINING_STEPS_PER_UPDATE);
+    this.lastTrainingLoss = stats.loss;
+    this.replaySize = stats.replaySize;
 
     this.initializeRolloutBatch();
-    this.ppoUpdate += 1;
+    this.dqnUpdate += 1;
     this.invalidateRandomBoardAgents();
+  }
+
+  private explorationRate(): number {
+    const denominator = Math.max(1, DQN_EPSILON_DECAY_STEPS);
+    const progress = Math.min(1, Math.max(0, this.totalEnvSteps / denominator));
+    return DQN_EPSILON_START + (DQN_EPSILON_END - DQN_EPSILON_START) * progress;
   }
 
   private computeReward(agent: Agent, previousScore: number): number {

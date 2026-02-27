@@ -608,7 +608,7 @@ export class SnakeRenderer {
     this.chartCtx.fillStyle = "rgba(255, 255, 255, 0.75)";
     this.chartCtx.font = "12px IBM Plex Mono, monospace";
     this.chartCtx.fillText(
-      `PPO update best fitness history (max ${maxFitness.toFixed(2)})`,
+      `DQN update best fitness history (max ${maxFitness.toFixed(2)})`,
       10,
       16,
     );
@@ -616,12 +616,15 @@ export class SnakeRenderer {
 
   private updateStats(state: TrainerState): void {
     this.stats.innerHTML = [
-      `PPO update: <strong>${state.ppoUpdate}</strong>`,
+      `DQN update: <strong>${state.dqnUpdate}</strong>`,
       `Alive: ${state.alive}/${state.rolloutBatchSize}`,
       `Grid: ${GRID_SIZE}x${GRID_SIZE}`,
       `Best score: ${state.bestEverScore}`,
       `Best fitness: ${state.bestEverFitness.toFixed(2)}`,
       `Updates since best: ${state.updatesSinceBest}`,
+      `Epsilon: ${state.epsilon.toFixed(3)}`,
+      `Replay size: ${state.replaySize}`,
+      `Loss: ${state.loss.toFixed(4)}`,
     ].join("<br>");
   }
 }
