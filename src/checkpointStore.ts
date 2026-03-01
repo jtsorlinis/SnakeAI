@@ -1,12 +1,12 @@
-const CHECKPOINT_DB_NAME = "snake-ppo-checkpoint-db";
+const CHECKPOINT_DB_NAME = "snake-es-checkpoint-db";
 const CHECKPOINT_DB_VERSION = 1;
 const CHECKPOINT_STORE_NAME = "checkpoints";
 const CHECKPOINT_STATS_KEY = "latest-stats";
 
-export const CHECKPOINT_MODEL_KEY = "snake-ppo-model";
+export const CHECKPOINT_MODEL_KEY = "snake-es-model";
 
 export type CheckpointStats = {
-  version: 1;
+  version: 2;
   savedAtMs: number;
   gridSize: number;
   episodeCount: number;
@@ -14,12 +14,11 @@ export type CheckpointStats = {
   bestScore: number;
   bestReturn: number;
   rewardHistory: number[];
-  totalLoss: number;
-  policyLoss: number;
-  valueLoss: number;
-  entropy: number;
-  approxKl: number;
-  clipFraction: number;
+  fitnessMean: number;
+  fitnessStd: number;
+  fitnessBest: number;
+  updateNorm: number;
+  weightNorm: number;
   updates: number;
 };
 

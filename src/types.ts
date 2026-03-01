@@ -22,7 +22,6 @@ export type Transition = {
 export type NetworkState = {
   observation: Float32Array | null;
   policy: Float32Array | null;
-  value: number;
   action: number;
 };
 
@@ -35,13 +34,12 @@ export type TrainerState = {
   bestScore: number;
   avgReturn: number;
   bestReturn: number;
-  totalLoss: number;
-  policyLoss: number;
-  valueLoss: number;
-  entropy: number;
-  approxKl: number;
-  clipFraction: number;
+  fitnessMean: number;
+  fitnessStd: number;
+  fitnessBest: number;
+  updateNorm: number;
+  weightNorm: number;
   updates: number;
-  rolloutProgress: number;
+  generationProgress: number;
   network: NetworkState;
 };

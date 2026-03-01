@@ -1,15 +1,12 @@
 import {
-  GAE_LAMBDA,
-  GAMMA,
+  ES_EVAL_ENVS,
+  ES_EVAL_STEPS,
+  ES_GENERATION_STEPS,
+  ES_LEARNING_RATE,
+  ES_NOISE_STD,
+  ES_POPULATION_SIZE,
   GRID_SIZE,
   OUTPUTS,
-  PPO_CLIP_RANGE,
-  PPO_ENTROPY_COEF,
-  PPO_EPOCHS,
-  PPO_MINIBATCH_SIZE,
-  PPO_ROLLOUT_STEPS,
-  PPO_TARGET_KL,
-  PPO_VALUE_LOSS_COEF,
   REWARD_HISTORY_LIMIT,
   TRAIN_ENVS,
   observationSize,
@@ -26,32 +23,7 @@ import type { Agent, TrainerState } from "./types";
 
 const AVG_WINDOW = 100;
 const METRIC_EMA = 0.1;
-const PPO_MINIBATCHES_PER_SIM_TICK = 1;
-
-type PendingPpoUpdate = {
-  batchSize: number;
-  indices: Int32Array;
-  epoch: number;
-  cursor: number;
-  accumTotalLoss: number;
-  accumPolicyLoss: number;
-  accumValueLoss: number;
-  accumEntropy: number;
-  accumApproxKl: number;
-  accumClipFraction: number;
-  batches: number;
-};
-
-const CHECKPOINT_VERSION = 1;
-
-function shuffleIndices(indices: Int32Array): void {
-  for (let i = indices.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const temp = indices[i];
-    indices[i] = indices[j];
-    indices[j] = temp;
-  }
-}
+const CHECKPOINT_VERSION = 2;
 
 function ema(previous: number, next: number): number {
   if (!Number.isFinite(next)) {
@@ -60,30 +32,47 @@ function ema(previous: number, next: number): number {
   return previous === 0 ? next : previous * (1 - METRIC_EMA) + next * METRIC_EMA;
 }
 
+function fillRandomNormal(target: Float32Array): void {
+  for (let i = 0; i < target.length; i += 2) {
+    const u1 = Math.max(1e-7, Math.random());
+    const u2 = Math.random();
+    const magnitude = Math.sqrt(-2 * Math.log(u1));
+    const angle = 2 * Math.PI * u2;
+
+    target[i] = magnitude * Math.cos(angle);
+    if (i + 1 < target.length) {
+      target[i + 1] = magnitude * Math.sin(angle);
+    }
+  }
+}
+
+function l2Norm(values: ArrayLike<number>): number {
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    sum += values[i] * values[i];
+  }
+  return Math.sqrt(sum);
+}
+
 export class SnakeTrainer {
   private readonly environment = new SnakeEnvironment();
   private online = new ConvDQN();
 
   private trainingAgents: Agent[] = [];
   private trainingStates: Float32Array[] = [];
-
-  private rolloutStates: Float32Array[] = [];
-  private rolloutActions = new Int32Array(0);
-  private rolloutRewards = new Float32Array(0);
-  private rolloutDones = new Uint8Array(0);
-  private rolloutValues = new Float32Array(0);
-  private rolloutLogProbs = new Float32Array(0);
-  private rolloutAdvantages = new Float32Array(0);
-  private rolloutReturns = new Float32Array(0);
-  private rolloutStep = 0;
-  private pendingPpoUpdate: PendingPpoUpdate | null = null;
+  private trainingActions = new Int32Array(0);
+  private generationStep = 0;
 
   private showcaseAgent: Agent = this.environment.createAgent();
   private showcaseObservation: Float32Array = new Float32Array(observationSize());
   private showcasePolicy = new Float32Array(OUTPUTS);
   private showcaseLogits = new Float32Array(OUTPUTS);
   private showcaseAction = 0;
-  private showcaseValue = 0;
+
+  private baseWeights = new Float32Array(0);
+  private candidateWeights = new Float32Array(0);
+  private noiseScratch = new Float32Array(0);
+  private gradientScratch = new Float32Array(0);
 
   private rewardHistory: number[] = [];
   private episodeCount = 0;
@@ -92,12 +81,11 @@ export class SnakeTrainer {
   private bestScoreValue = 0;
   private bestReturnValue = Number.NEGATIVE_INFINITY;
 
-  private totalLoss = 0;
-  private policyLoss = 0;
-  private valueLoss = 0;
-  private entropy = 0;
-  private approxKl = 0;
-  private clipFraction = 0;
+  private fitnessMean = 0;
+  private fitnessStd = 0;
+  private fitnessBest = Number.NEGATIVE_INFINITY;
+  private updateNorm = 0;
+  private weightNorm = 0;
   private updates = 0;
 
   constructor() {
@@ -117,17 +105,15 @@ export class SnakeTrainer {
       this.trainingStates.push(this.environment.observe(agent));
     }
 
-    const rolloutSize = PPO_ROLLOUT_STEPS * TRAIN_ENVS;
-    this.rolloutStates = new Array<Float32Array>(rolloutSize);
-    this.rolloutActions = new Int32Array(rolloutSize);
-    this.rolloutRewards = new Float32Array(rolloutSize);
-    this.rolloutDones = new Uint8Array(rolloutSize);
-    this.rolloutValues = new Float32Array(rolloutSize);
-    this.rolloutLogProbs = new Float32Array(rolloutSize);
-    this.rolloutAdvantages = new Float32Array(rolloutSize);
-    this.rolloutReturns = new Float32Array(rolloutSize);
-    this.rolloutStep = 0;
-    this.pendingPpoUpdate = null;
+    this.trainingActions = new Int32Array(TRAIN_ENVS);
+    this.generationStep = 0;
+
+    const parameterCount = this.online.parameterCount();
+    this.baseWeights = new Float32Array(parameterCount);
+    this.candidateWeights = new Float32Array(parameterCount);
+    this.noiseScratch = new Float32Array(parameterCount);
+    this.gradientScratch = new Float32Array(parameterCount);
+    this.online.exportWeightsFlat(this.baseWeights);
 
     this.showcaseAgent = this.environment.createAgent();
     this.showcaseObservation = new Float32Array(observationSize());
@@ -142,12 +128,11 @@ export class SnakeTrainer {
     this.bestScoreValue = 0;
     this.bestReturnValue = Number.NEGATIVE_INFINITY;
 
-    this.totalLoss = 0;
-    this.policyLoss = 0;
-    this.valueLoss = 0;
-    this.entropy = 0;
-    this.approxKl = 0;
-    this.clipFraction = 0;
+    this.fitnessMean = 0;
+    this.fitnessStd = 0;
+    this.fitnessBest = Number.NEGATIVE_INFINITY;
+    this.updateNorm = 0;
+    this.weightNorm = l2Norm(this.baseWeights);
     this.updates = 0;
   }
 
@@ -155,15 +140,12 @@ export class SnakeTrainer {
     let envSteps = 0;
 
     for (let i = 0; i < stepCount; i++) {
-      if (this.pendingPpoUpdate) {
-        this.runPendingPpoUpdate(PPO_MINIBATCHES_PER_SIM_TICK);
-      } else {
-        this.stepTrainingEnvironments();
-        envSteps += TRAIN_ENVS;
+      this.stepTrainingEnvironments();
+      envSteps += TRAIN_ENVS;
 
-        if (this.rolloutStep >= PPO_ROLLOUT_STEPS) {
-          this.beginPpoUpdate();
-        }
+      if (this.generationStep >= ES_GENERATION_STEPS) {
+        this.runEvolutionUpdate();
+        this.generationStep = 0;
       }
 
       this.stepShowcase();
@@ -191,18 +173,17 @@ export class SnakeTrainer {
         this.bestReturnValue === Number.NEGATIVE_INFINITY
           ? 0
           : this.bestReturnValue,
-      totalLoss: this.totalLoss,
-      policyLoss: this.policyLoss,
-      valueLoss: this.valueLoss,
-      entropy: this.entropy,
-      approxKl: this.approxKl,
-      clipFraction: this.clipFraction,
+      fitnessMean: this.fitnessMean,
+      fitnessStd: this.fitnessStd,
+      fitnessBest:
+        this.fitnessBest === Number.NEGATIVE_INFINITY ? 0 : this.fitnessBest,
+      updateNorm: this.updateNorm,
+      weightNorm: this.weightNorm,
       updates: this.updates,
-      rolloutProgress: this.rolloutStep / PPO_ROLLOUT_STEPS,
+      generationProgress: this.generationStep / ES_GENERATION_STEPS,
       network: {
         observation: this.showcaseObservation,
         policy: this.showcasePolicy,
-        value: this.showcaseValue,
         action: this.showcaseAction,
       },
     };
@@ -244,6 +225,7 @@ export class SnakeTrainer {
       return null;
     }
 
+    this.online.exportWeightsFlat(this.baseWeights);
     this.applyCheckpointSnapshot(snapshot);
     this.refreshShowcasePrediction();
     return snapshot;
@@ -254,23 +236,13 @@ export class SnakeTrainer {
   }
 
   private stepTrainingEnvironments(): void {
-    const rolloutOffset = this.rolloutStep * TRAIN_ENVS;
+    this.online.actBatch(this.trainingStates, true, this.trainingActions);
 
     for (let i = 0; i < TRAIN_ENVS; i++) {
       const agent = this.trainingAgents[i];
-      const state = this.trainingStates[i];
-
-      const decision = this.online.act(state, true);
-      const result = this.environment.step(agent, decision.action);
+      const action = this.trainingActions[i];
+      const result = this.environment.step(agent, action);
       agent.episodeReturn += result.reward;
-
-      const writeIndex = rolloutOffset + i;
-      this.rolloutStates[writeIndex] = state;
-      this.rolloutActions[writeIndex] = decision.action;
-      this.rolloutRewards[writeIndex] = result.reward;
-      this.rolloutDones[writeIndex] = result.done ? 1 : 0;
-      this.rolloutValues[writeIndex] = decision.value;
-      this.rolloutLogProbs[writeIndex] = decision.logProb;
       this.totalSteps += 1;
 
       if (result.done) {
@@ -279,201 +251,158 @@ export class SnakeTrainer {
         this.environment.resetAgent(agent);
       }
 
-      this.trainingStates[i] = this.environment.observe(agent);
+      this.environment.observe(agent, this.trainingStates[i]);
     }
 
-    this.rolloutStep += 1;
+    this.generationStep += 1;
   }
 
-  private beginPpoUpdate(): void {
-    const batchSize = this.rolloutStep * TRAIN_ENVS;
-    if (batchSize <= 0) {
+  private runEvolutionUpdate(): void {
+    if (ES_NOISE_STD <= 0 || ES_EVAL_STEPS <= 0 || ES_EVAL_ENVS <= 0) {
       return;
     }
 
-    const lastValues = new Float32Array(TRAIN_ENVS);
-    for (let i = 0; i < TRAIN_ENVS; i++) {
-      lastValues[i] = this.online.act(this.trainingStates[i], false).value;
+    const populationSize =
+      ES_POPULATION_SIZE >= 2
+        ? ES_POPULATION_SIZE + (ES_POPULATION_SIZE % 2)
+        : 2;
+    const pairCount = Math.max(1, populationSize / 2);
+
+    this.online.exportWeightsFlat(this.baseWeights);
+    this.gradientScratch.fill(0);
+
+    const referenceAgents = this.captureEvaluationAgents();
+    const rewards = new Float32Array(populationSize);
+    let rewardCursor = 0;
+    let bestCandidate = Number.NEGATIVE_INFINITY;
+
+    for (let pair = 0; pair < pairCount; pair++) {
+      fillRandomNormal(this.noiseScratch);
+
+      this.online.addScaledNoise(
+        this.baseWeights,
+        this.noiseScratch,
+        ES_NOISE_STD,
+        this.candidateWeights,
+      );
+      const rewardPlus = this.evaluateCandidate(referenceAgents, this.candidateWeights);
+      rewards[rewardCursor] = rewardPlus;
+      rewardCursor += 1;
+
+      this.online.addScaledNoise(
+        this.baseWeights,
+        this.noiseScratch,
+        -ES_NOISE_STD,
+        this.candidateWeights,
+      );
+      const rewardMinus = this.evaluateCandidate(referenceAgents, this.candidateWeights);
+      rewards[rewardCursor] = rewardMinus;
+      rewardCursor += 1;
+
+      if (rewardPlus > bestCandidate) {
+        bestCandidate = rewardPlus;
+      }
+      if (rewardMinus > bestCandidate) {
+        bestCandidate = rewardMinus;
+      }
+
+      const rewardDiff = rewardPlus - rewardMinus;
+      for (let i = 0; i < this.gradientScratch.length; i++) {
+        this.gradientScratch[i] += rewardDiff * this.noiseScratch[i];
+      }
     }
 
-    this.computeGeneralizedAdvantages(lastValues);
-    this.normalizeAdvantages(batchSize);
+    const updateScale = ES_LEARNING_RATE / (2 * pairCount * ES_NOISE_STD);
+    let updateSumSquares = 0;
 
-    const indices = new Int32Array(batchSize);
-    for (let i = 0; i < batchSize; i++) {
-      indices[i] = i;
+    for (let i = 0; i < this.baseWeights.length; i++) {
+      const delta = updateScale * this.gradientScratch[i];
+      this.baseWeights[i] += delta;
+      updateSumSquares += delta * delta;
     }
-    shuffleIndices(indices);
 
-    this.pendingPpoUpdate = {
-      batchSize,
-      indices,
-      epoch: 0,
-      cursor: 0,
-      accumTotalLoss: 0,
-      accumPolicyLoss: 0,
-      accumValueLoss: 0,
-      accumEntropy: 0,
-      accumApproxKl: 0,
-      accumClipFraction: 0,
-      batches: 0,
+    this.online.importWeightsFlat(this.baseWeights);
+
+    let rewardSum = 0;
+    for (let i = 0; i < rewards.length; i++) {
+      rewardSum += rewards[i];
+    }
+    const rewardMean = rewardSum / rewards.length;
+
+    let rewardVariance = 0;
+    for (let i = 0; i < rewards.length; i++) {
+      const centered = rewards[i] - rewardMean;
+      rewardVariance += centered * centered;
+    }
+    const rewardStd = Math.sqrt(rewardVariance / rewards.length);
+
+    this.fitnessMean = ema(this.fitnessMean, rewardMean);
+    this.fitnessStd = ema(this.fitnessStd, rewardStd);
+    if (bestCandidate > this.fitnessBest) {
+      this.fitnessBest = bestCandidate;
+    }
+    this.updateNorm = ema(this.updateNorm, Math.sqrt(updateSumSquares));
+    this.weightNorm = ema(this.weightNorm, l2Norm(this.baseWeights));
+    this.updates += 1;
+  }
+
+  private captureEvaluationAgents(): Agent[] {
+    const count = Math.max(1, Math.min(ES_EVAL_ENVS, this.trainingAgents.length));
+    const agents = new Array<Agent>(count);
+
+    for (let i = 0; i < count; i++) {
+      agents[i] = this.cloneAgent(this.trainingAgents[i]);
+    }
+
+    return agents;
+  }
+
+  private evaluateCandidate(
+    referenceAgents: readonly Agent[],
+    candidateWeights: Float32Array,
+  ): number {
+    this.online.importWeightsFlat(candidateWeights);
+
+    const agents = new Array<Agent>(referenceAgents.length);
+    const observations = new Array<Float32Array>(referenceAgents.length);
+    const actions = new Int32Array(referenceAgents.length);
+
+    for (let i = 0; i < referenceAgents.length; i++) {
+      agents[i] = this.cloneAgent(referenceAgents[i]);
+      observations[i] = this.environment.observe(agents[i]);
+    }
+
+    let rewardSum = 0;
+
+    for (let step = 0; step < ES_EVAL_STEPS; step++) {
+      this.online.actBatch(observations, false, actions);
+
+      for (let env = 0; env < agents.length; env++) {
+        const result = this.environment.step(agents[env], actions[env]);
+        rewardSum += result.reward;
+
+        if (result.done) {
+          this.environment.resetAgent(agents[env]);
+        }
+
+        this.environment.observe(agents[env], observations[env]);
+      }
+    }
+
+    return rewardSum / (ES_EVAL_STEPS * agents.length);
+  }
+
+  private cloneAgent(agent: Agent): Agent {
+    return {
+      body: agent.body.map((part) => ({ x: part.x, y: part.y })),
+      dir: agent.dir,
+      food: { x: agent.food.x, y: agent.food.y },
+      alive: agent.alive,
+      score: agent.score,
+      steps: agent.steps,
+      hunger: agent.hunger,
+      episodeReturn: agent.episodeReturn,
     };
-  }
-
-  private runPendingPpoUpdate(maxMiniBatches: number): void {
-    let processed = 0;
-
-    while (processed < maxMiniBatches && this.pendingPpoUpdate) {
-      const update = this.pendingPpoUpdate;
-      const start = update.cursor;
-      const end = Math.min(update.batchSize, start + PPO_MINIBATCH_SIZE);
-
-      if (end <= start) {
-        if (update.epoch >= PPO_EPOCHS - 1) {
-          this.finishPpoUpdate();
-          break;
-        }
-
-        update.epoch += 1;
-        update.cursor = 0;
-        shuffleIndices(update.indices);
-        continue;
-      }
-
-      const miniBatchSize = end - start;
-
-      const miniStates = new Array<ArrayLike<number>>(miniBatchSize);
-      const miniActions = new Int32Array(miniBatchSize);
-      const miniOldLogProbs = new Float32Array(miniBatchSize);
-      const miniAdvantages = new Float32Array(miniBatchSize);
-      const miniReturns = new Float32Array(miniBatchSize);
-
-      for (let i = 0; i < miniBatchSize; i++) {
-        const sourceIndex = update.indices[start + i];
-        miniStates[i] = this.rolloutStates[sourceIndex];
-        miniActions[i] = this.rolloutActions[sourceIndex];
-        miniOldLogProbs[i] = this.rolloutLogProbs[sourceIndex];
-        miniAdvantages[i] = this.rolloutAdvantages[sourceIndex];
-        miniReturns[i] = this.rolloutReturns[sourceIndex];
-      }
-
-      const result = this.online.trainBatch({
-        observations: miniStates,
-        actions: miniActions,
-        oldLogProbs: miniOldLogProbs,
-        advantages: miniAdvantages,
-        returns: miniReturns,
-        clipRange: PPO_CLIP_RANGE,
-        valueLossCoef: PPO_VALUE_LOSS_COEF,
-        entropyCoef: PPO_ENTROPY_COEF,
-      });
-
-      update.accumTotalLoss += result.totalLoss;
-      update.accumPolicyLoss += result.policyLoss;
-      update.accumValueLoss += result.valueLoss;
-      update.accumEntropy += result.entropy;
-      update.accumApproxKl += result.approxKl;
-      update.accumClipFraction += result.clipFraction;
-      update.batches += 1;
-      update.cursor = end;
-      processed += 1;
-
-      if (result.approxKl > PPO_TARGET_KL) {
-        this.finishPpoUpdate();
-        break;
-      }
-
-      if (update.cursor >= update.batchSize) {
-        if (update.epoch >= PPO_EPOCHS - 1) {
-          this.finishPpoUpdate();
-          break;
-        }
-
-        update.epoch += 1;
-        update.cursor = 0;
-        shuffleIndices(update.indices);
-      }
-    }
-  }
-
-  private finishPpoUpdate(): void {
-    if (!this.pendingPpoUpdate) {
-      return;
-    }
-
-    if (this.pendingPpoUpdate.batches > 0) {
-      const batchCount = this.pendingPpoUpdate.batches;
-      this.totalLoss = ema(
-        this.totalLoss,
-        this.pendingPpoUpdate.accumTotalLoss / batchCount,
-      );
-      this.policyLoss = ema(
-        this.policyLoss,
-        this.pendingPpoUpdate.accumPolicyLoss / batchCount,
-      );
-      this.valueLoss = ema(
-        this.valueLoss,
-        this.pendingPpoUpdate.accumValueLoss / batchCount,
-      );
-      this.entropy = ema(
-        this.entropy,
-        this.pendingPpoUpdate.accumEntropy / batchCount,
-      );
-      this.approxKl = ema(
-        this.approxKl,
-        this.pendingPpoUpdate.accumApproxKl / batchCount,
-      );
-      this.clipFraction = ema(
-        this.clipFraction,
-        this.pendingPpoUpdate.accumClipFraction / batchCount,
-      );
-      this.updates += 1;
-    }
-
-    this.pendingPpoUpdate = null;
-    this.rolloutStep = 0;
-  }
-
-  private computeGeneralizedAdvantages(lastValues: Float32Array): void {
-    for (let env = 0; env < TRAIN_ENVS; env++) {
-      let gae = 0;
-      let nextValue = lastValues[env];
-
-      for (let step = this.rolloutStep - 1; step >= 0; step--) {
-        const index = step * TRAIN_ENVS + env;
-        const nonTerminal = this.rolloutDones[index] === 1 ? 0 : 1;
-
-        const delta =
-          this.rolloutRewards[index] +
-          GAMMA * nextValue * nonTerminal -
-          this.rolloutValues[index];
-
-        gae = delta + GAMMA * GAE_LAMBDA * nonTerminal * gae;
-
-        this.rolloutAdvantages[index] = gae;
-        this.rolloutReturns[index] = gae + this.rolloutValues[index];
-        nextValue = this.rolloutValues[index];
-      }
-    }
-  }
-
-  private normalizeAdvantages(batchSize: number): void {
-    let sum = 0;
-    for (let i = 0; i < batchSize; i++) {
-      sum += this.rolloutAdvantages[i];
-    }
-
-    const mean = sum / batchSize;
-    let variance = 0;
-    for (let i = 0; i < batchSize; i++) {
-      const centered = this.rolloutAdvantages[i] - mean;
-      variance += centered * centered;
-    }
-
-    const std = Math.sqrt(variance / batchSize + 1e-8);
-    for (let i = 0; i < batchSize; i++) {
-      this.rolloutAdvantages[i] = (this.rolloutAdvantages[i] - mean) / std;
-    }
   }
 
   private stepShowcase(): void {
@@ -493,12 +422,11 @@ export class SnakeTrainer {
 
   private refreshShowcasePrediction(): void {
     this.environment.observe(this.showcaseAgent, this.showcaseObservation);
-    const prediction = this.online.predict(
+    this.online.predict(
       this.showcaseObservation,
       this.showcasePolicy,
       this.showcaseLogits,
     );
-    this.showcaseValue = prediction.value;
     this.showcaseAction = argMax(this.showcasePolicy);
   }
 
@@ -533,12 +461,12 @@ export class SnakeTrainer {
           ? 0
           : this.bestReturnValue,
       rewardHistory: this.rewardHistory.slice(),
-      totalLoss: this.totalLoss,
-      policyLoss: this.policyLoss,
-      valueLoss: this.valueLoss,
-      entropy: this.entropy,
-      approxKl: this.approxKl,
-      clipFraction: this.clipFraction,
+      fitnessMean: this.fitnessMean,
+      fitnessStd: this.fitnessStd,
+      fitnessBest:
+        this.fitnessBest === Number.NEGATIVE_INFINITY ? 0 : this.fitnessBest,
+      updateNorm: this.updateNorm,
+      weightNorm: this.weightNorm,
       updates: this.updates,
     };
   }
@@ -551,12 +479,14 @@ export class SnakeTrainer {
     this.bestReturnValue = Number.isFinite(snapshot.bestReturn)
       ? snapshot.bestReturn
       : Number.NEGATIVE_INFINITY;
-    this.totalLoss = snapshot.totalLoss;
-    this.policyLoss = snapshot.policyLoss;
-    this.valueLoss = snapshot.valueLoss;
-    this.entropy = snapshot.entropy;
-    this.approxKl = snapshot.approxKl;
-    this.clipFraction = snapshot.clipFraction;
+
+    this.fitnessMean = snapshot.fitnessMean;
+    this.fitnessStd = snapshot.fitnessStd;
+    this.fitnessBest = Number.isFinite(snapshot.fitnessBest)
+      ? snapshot.fitnessBest
+      : Number.NEGATIVE_INFINITY;
+    this.updateNorm = snapshot.updateNorm;
+    this.weightNorm = snapshot.weightNorm;
     this.updates = Math.max(0, snapshot.updates);
   }
 

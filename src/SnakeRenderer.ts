@@ -164,26 +164,17 @@ export class SnakeRenderer {
       );
     }
 
-    const valueY = qTop + policy.length * 34 + 6;
-    this.netCtx.fillStyle = "rgba(255,255,255,0.86)";
-    this.netCtx.font = "12px JetBrains Mono, monospace";
-    this.netCtx.fillText(
-      `Value estimate: ${state.network.value.toFixed(3)}`,
-      marginX,
-      valueY,
-    );
-
-    const footerY = valueY + 18;
+    const footerY = qTop + policy.length * 34 + 10;
     this.netCtx.fillStyle = "rgba(255,255,255,0.78)";
     this.netCtx.font = "11px JetBrains Mono, monospace";
     this.netCtx.fillText(
-      `loss=${state.totalLoss.toFixed(4)}   policy=${state.policyLoss.toFixed(4)}   value=${state.valueLoss.toFixed(4)}`,
+      `ES fitness μ=${state.fitnessMean.toFixed(4)}   σ=${state.fitnessStd.toFixed(4)}   best=${state.fitnessBest.toFixed(4)}`,
       marginX,
       footerY,
     );
 
     this.netCtx.fillText(
-      `entropy=${state.entropy.toFixed(4)}   kl=${state.approxKl.toFixed(4)}   clip=${state.clipFraction.toFixed(3)}`,
+      `update ||Δθ||=${state.updateNorm.toFixed(4)}   weight ||θ||=${state.weightNorm.toFixed(2)}   gens=${state.updates}`,
       marginX,
       footerY + 14,
     );
@@ -382,6 +373,7 @@ export class SnakeRenderer {
       `Best score: ${state.bestScore}`,
       `Avg return (last 100): ${state.avgReturn.toFixed(3)}`,
       `Best return: ${state.bestReturn.toFixed(3)}`,
+      `ES gen progress: ${(state.generationProgress * 100).toFixed(0)}%`,
     ].join("<br>");
   }
 }
