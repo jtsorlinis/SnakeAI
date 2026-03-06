@@ -2,6 +2,8 @@ export type Point = { x: number; y: number };
 
 export type PolicyParams = Float32Array;
 
+export type TerminalReason = "collision" | "hunger" | "solved" | null;
+
 export type Agent = {
   policy: PolicyParams;
   body: Point[];
@@ -12,6 +14,7 @@ export type Agent = {
   steps: number;
   hunger: number;
   fitness: number;
+  terminalReason: TerminalReason;
 };
 
 export type NetworkActivations = {

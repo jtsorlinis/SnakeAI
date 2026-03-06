@@ -253,7 +253,9 @@ export class SnakeTrainer {
   private computeReward(agent: Agent, previousScore: number): number {
     let reward = agent.score - previousScore;
     reward -= 1 / (GRID_SIZE * GRID_SIZE);
-    if (!agent.alive && agent.hunger > 0) {
+    if (agent.terminalReason === "solved") {
+      reward += 1;
+    } else if (agent.terminalReason === "collision") {
       reward -= 1;
     }
     return reward;
@@ -261,7 +263,7 @@ export class SnakeTrainer {
 
   private fitness(agent: Agent): number {
     const foodReward = agent.score;
-    const deathPenalty = !agent.alive && agent.hunger > 0 ? 1 : 0;
+    const deathPenalty = agent.terminalReason === "collision" ? 1 : 0;
     const stepPenalty = agent.steps / (GRID_SIZE * GRID_SIZE);
     return foodReward - deathPenalty - stepPenalty;
   }

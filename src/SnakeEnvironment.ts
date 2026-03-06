@@ -36,6 +36,7 @@ export class SnakeEnvironment {
       steps: 0,
       hunger: BASE_HUNGER,
       fitness: 0,
+      terminalReason: null,
     };
   }
 
@@ -69,6 +70,7 @@ export class SnakeEnvironment {
 
     if (this.outOfBounds(next.x, next.y)) {
       agent.alive = false;
+      agent.terminalReason = "collision";
       return;
     }
 
@@ -77,6 +79,7 @@ export class SnakeEnvironment {
 
     if (this.pointInBody(agent.body, next, len)) {
       agent.alive = false;
+      agent.terminalReason = "collision";
       return;
     }
 
@@ -87,6 +90,7 @@ export class SnakeEnvironment {
 
       if (agent.score >= MAX_SCORE) {
         agent.alive = false;
+        agent.terminalReason = "solved";
         return;
       }
 
@@ -98,6 +102,7 @@ export class SnakeEnvironment {
 
     if (agent.hunger <= 0) {
       agent.alive = false;
+      agent.terminalReason = "hunger";
     }
   }
 
