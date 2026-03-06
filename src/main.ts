@@ -1,5 +1,5 @@
 import "./style.css";
-import { ensureTfjsBackend } from "./ConvDQN";
+import { ensureTfjsBackend } from "./PolicyValueTransformer";
 import { Game } from "./Game";
 import { enableWakeLock } from "./utils/wakeLock";
 

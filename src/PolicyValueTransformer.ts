@@ -39,67 +39,323 @@ export type PolicyAction = {
 
 export type PolicyValuePrediction = {
   policy: Float32Array;
-  logits: Float32Array;
   value: number;
 };
 
 let backendInitPromise: Promise<void> | null = null;
 
-function createOptimalModel(gridSize: number): tf.LayersModel {
+const TRANSFORMER_MODEL_DIM = 64;
+const TRANSFORMER_HEADS = 4;
+const TRANSFORMER_BLOCKS = 2;
+const TRANSFORMER_FF_DIM = 128;
+const TRANSFORMER_LAYER_NORM_EPSILON = 1e-6;
+
+type PositionEncodingLayerArgs = {
+  tokenCount: number;
+  modelDim: number;
+  name?: string;
+};
+
+type ScaledDotProductAttentionArgs = {
+  numHeads: number;
+  modelDim: number;
+  name?: string;
+};
+
+function isShapeList(
+  shape: tf.Shape | tf.Shape[],
+): shape is tf.Shape[] {
+  return Array.isArray(shape) && Array.isArray(shape[0]);
+}
+
+function createSinusoidalPositionEncoding(
+  tokenCount: number,
+  modelDim: number,
+): Float32Array {
+  const encoding = new Float32Array(tokenCount * modelDim);
+
+  for (let token = 0; token < tokenCount; token++) {
+    const rowOffset = token * modelDim;
+
+    for (let dim = 0; dim < modelDim; dim += 2) {
+      const angle = token / Math.pow(10000, dim / modelDim);
+      encoding[rowOffset + dim] = Math.sin(angle);
+
+      if (dim + 1 < modelDim) {
+        encoding[rowOffset + dim + 1] = Math.cos(angle);
+      }
+    }
+  }
+
+  return encoding;
+}
+
+class SinusoidalPositionEncoding extends tf.layers.Layer {
+  public static className = "SinusoidalPositionEncoding";
+
+  private readonly tokenCount: number;
+  private readonly modelDim: number;
+  private readonly encodingValues: Float32Array;
+
+  constructor(args: PositionEncodingLayerArgs) {
+    super(args);
+    this.tokenCount = args.tokenCount;
+    this.modelDim = args.modelDim;
+    this.encodingValues = createSinusoidalPositionEncoding(
+      this.tokenCount,
+      this.modelDim,
+    );
+  }
+
+  public computeOutputShape(inputShape: tf.Shape | tf.Shape[]): tf.Shape | tf.Shape[] {
+    return inputShape;
+  }
+
+  public call(
+    inputs: tf.Tensor | tf.Tensor[],
+    _kwargs: Record<string, unknown>,
+  ): tf.Tensor | tf.Tensor[] {
+    const input = Array.isArray(inputs) ? inputs[0] : inputs;
+
+    return tf.tidy(() => {
+      const encoding = tf.tensor3d(this.encodingValues, [
+        1,
+        this.tokenCount,
+        this.modelDim,
+      ]);
+
+      return input.add(encoding);
+    });
+  }
+
+  public getConfig(): tf.serialization.ConfigDict {
+    return {
+      ...super.getConfig(),
+      tokenCount: this.tokenCount,
+      modelDim: this.modelDim,
+    };
+  }
+}
+
+class ScaledDotProductAttention extends tf.layers.Layer {
+  public static className = "ScaledDotProductAttention";
+
+  private readonly numHeads: number;
+  private readonly modelDim: number;
+  private readonly headDim: number;
+
+  constructor(args: ScaledDotProductAttentionArgs) {
+    super(args);
+
+    if (args.modelDim % args.numHeads !== 0) {
+      throw new Error(
+        `Transformer modelDim (${args.modelDim}) must be divisible by numHeads (${args.numHeads}).`,
+      );
+    }
+
+    this.numHeads = args.numHeads;
+    this.modelDim = args.modelDim;
+    this.headDim = args.modelDim / args.numHeads;
+  }
+
+  public computeOutputShape(inputShape: tf.Shape | tf.Shape[]): tf.Shape | tf.Shape[] {
+    if (!isShapeList(inputShape) || inputShape.length !== 3) {
+      throw new Error(
+        "ScaledDotProductAttention expects [queryShape, keyShape, valueShape].",
+      );
+    }
+
+    return inputShape[0];
+  }
+
+  public call(
+    inputs: tf.Tensor | tf.Tensor[],
+    _kwargs: Record<string, unknown>,
+  ): tf.Tensor | tf.Tensor[] {
+    if (!Array.isArray(inputs) || inputs.length !== 3) {
+      throw new Error("ScaledDotProductAttention expects [query, key, value].");
+    }
+
+    const [query, key, value] = inputs as tf.Tensor3D[];
+    const queryTokens = query.shape[1];
+    const keyTokens = key.shape[1];
+    const valueTokens = value.shape[1];
+
+    if (queryTokens == null || keyTokens == null || valueTokens == null) {
+      throw new Error("Transformer attention requires a known token dimension.");
+    }
+
+    return tf.tidy(() => {
+      const batchSize = query.shape[0] ?? -1;
+      const queryHeads = tf.transpose(
+        query.reshape([batchSize, queryTokens, this.numHeads, this.headDim]),
+        [0, 2, 1, 3],
+      );
+      const keyHeads = tf.transpose(
+        key.reshape([batchSize, keyTokens, this.numHeads, this.headDim]),
+        [0, 2, 1, 3],
+      );
+      const valueHeads = tf.transpose(
+        value.reshape([batchSize, valueTokens, this.numHeads, this.headDim]),
+        [0, 2, 1, 3],
+      );
+
+      const attentionScores = tf
+        .matMul(queryHeads, keyHeads, false, true)
+        .mul(1 / Math.sqrt(this.headDim));
+      const attentionWeights = tf.softmax(attentionScores, -1);
+      const contextHeads = tf.matMul(attentionWeights, valueHeads);
+      const context = tf.transpose(contextHeads, [0, 2, 1, 3]);
+
+      return context.reshape([batchSize, queryTokens, this.modelDim]);
+    });
+  }
+
+  public getConfig(): tf.serialization.ConfigDict {
+    return {
+      ...super.getConfig(),
+      numHeads: this.numHeads,
+      modelDim: this.modelDim,
+    };
+  }
+}
+
+tf.serialization.registerClass(SinusoidalPositionEncoding);
+tf.serialization.registerClass(ScaledDotProductAttention);
+
+function createTransformerModel(gridSize: number): tf.LayersModel {
+  const tokenCount = gridSize * gridSize;
   const input = tf.input({ shape: [gridSize, gridSize, OBS_CHANNELS] });
 
   let trunk = tf.layers
-    .conv2d({
-      filters: 32,
-      kernelSize: 3,
-      padding: "same",
-      activation: "relu",
-      kernelInitializer: "heNormal",
-      name: "conv1",
+    .reshape({
+      targetShape: [tokenCount, OBS_CHANNELS],
+      name: "board_tokens",
     })
     .apply(input) as tf.SymbolicTensor;
 
   trunk = tf.layers
-    .conv2d({
-      filters: 32,
-      kernelSize: 3,
-      padding: "same",
-      activation: "relu",
-      kernelInitializer: "heNormal",
-      name: "conv2",
+    .dense({
+      units: TRANSFORMER_MODEL_DIM,
+      activation: "linear",
+      kernelInitializer: "glorotUniform",
+      name: "token_projection",
     })
     .apply(trunk) as tf.SymbolicTensor;
 
-  trunk = tf.layers
-    .conv2d({
-      filters: 32,
-      kernelSize: 3,
-      padding: "same",
-      activation: "relu",
-      kernelInitializer: "heNormal",
-      name: "conv3",
-    })
-    .apply(trunk) as tf.SymbolicTensor;
+  trunk = new SinusoidalPositionEncoding({
+    tokenCount,
+    modelDim: TRANSFORMER_MODEL_DIM,
+    name: "position_encoding",
+  }).apply(trunk) as tf.SymbolicTensor;
 
-  const policyFeatures = tf.layers
-    .conv2d({
-      filters: 8,
-      kernelSize: 1,
-      padding: "same",
-      activation: "relu",
-      kernelInitializer: "heNormal",
-      name: "policy_conv",
+  for (let block = 0; block < TRANSFORMER_BLOCKS; block++) {
+    const prefix = `transformer_${block + 1}`;
+
+    const attentionNorm = tf.layers
+      .layerNormalization({
+        axis: -1,
+        epsilon: TRANSFORMER_LAYER_NORM_EPSILON,
+        name: `${prefix}_attn_norm`,
+      })
+      .apply(trunk) as tf.SymbolicTensor;
+
+    const query = tf.layers
+      .dense({
+        units: TRANSFORMER_MODEL_DIM,
+        activation: "linear",
+        useBias: false,
+        kernelInitializer: "glorotUniform",
+        name: `${prefix}_query`,
+      })
+      .apply(attentionNorm) as tf.SymbolicTensor;
+
+    const key = tf.layers
+      .dense({
+        units: TRANSFORMER_MODEL_DIM,
+        activation: "linear",
+        useBias: false,
+        kernelInitializer: "glorotUniform",
+        name: `${prefix}_key`,
+      })
+      .apply(attentionNorm) as tf.SymbolicTensor;
+
+    const value = tf.layers
+      .dense({
+        units: TRANSFORMER_MODEL_DIM,
+        activation: "linear",
+        useBias: false,
+        kernelInitializer: "glorotUniform",
+        name: `${prefix}_value`,
+      })
+      .apply(attentionNorm) as tf.SymbolicTensor;
+
+    const attention = new ScaledDotProductAttention({
+      numHeads: TRANSFORMER_HEADS,
+      modelDim: TRANSFORMER_MODEL_DIM,
+      name: `${prefix}_attention`,
+    }).apply([query, key, value]) as tf.SymbolicTensor;
+
+    const attentionProjection = tf.layers
+      .dense({
+        units: TRANSFORMER_MODEL_DIM,
+        activation: "linear",
+        kernelInitializer: "glorotUniform",
+        name: `${prefix}_attn_project`,
+      })
+      .apply(attention) as tf.SymbolicTensor;
+
+    trunk = tf.layers
+      .add({ name: `${prefix}_attn_residual` })
+      .apply([trunk, attentionProjection]) as tf.SymbolicTensor;
+
+    const feedForwardNorm = tf.layers
+      .layerNormalization({
+        axis: -1,
+        epsilon: TRANSFORMER_LAYER_NORM_EPSILON,
+        name: `${prefix}_ff_norm`,
+      })
+      .apply(trunk) as tf.SymbolicTensor;
+
+    let feedForward = tf.layers
+      .dense({
+        units: TRANSFORMER_FF_DIM,
+        activation: "gelu",
+        kernelInitializer: "heNormal",
+        name: `${prefix}_ff_expand`,
+      })
+      .apply(feedForwardNorm) as tf.SymbolicTensor;
+
+    feedForward = tf.layers
+      .dense({
+        units: TRANSFORMER_MODEL_DIM,
+        activation: "linear",
+        kernelInitializer: "heNormal",
+        name: `${prefix}_ff_project`,
+      })
+      .apply(feedForward) as tf.SymbolicTensor;
+
+    trunk = tf.layers
+      .add({ name: `${prefix}_ff_residual` })
+      .apply([trunk, feedForward]) as tf.SymbolicTensor;
+  }
+
+  const encoded = tf.layers
+    .layerNormalization({
+      axis: -1,
+      epsilon: TRANSFORMER_LAYER_NORM_EPSILON,
+      name: "transformer_output_norm",
     })
     .apply(trunk) as tf.SymbolicTensor;
 
   const policyFlat = tf.layers
     .flatten({ name: "policy_flatten" })
-    .apply(policyFeatures) as tf.SymbolicTensor;
+    .apply(encoded) as tf.SymbolicTensor;
 
   const policyHidden = tf.layers
     .dense({
-      units: 64,
-      activation: "relu",
+      units: 128,
+      activation: "gelu",
       kernelInitializer: "heNormal",
       name: "policy_hidden",
     })
@@ -114,25 +370,14 @@ function createOptimalModel(gridSize: number): tf.LayersModel {
     })
     .apply(policyHidden) as tf.SymbolicTensor;
 
-  const valueFeatures = tf.layers
-    .conv2d({
-      filters: 8,
-      kernelSize: 1,
-      padding: "same",
-      activation: "relu",
-      kernelInitializer: "heNormal",
-      name: "value_conv",
-    })
-    .apply(trunk) as tf.SymbolicTensor;
-
   const valueFlat = tf.layers
     .flatten({ name: "value_flatten" })
-    .apply(valueFeatures) as tf.SymbolicTensor;
+    .apply(encoded) as tf.SymbolicTensor;
 
   const valueHidden = tf.layers
     .dense({
-      units: 64,
-      activation: "relu",
+      units: 128,
+      activation: "gelu",
       kernelInitializer: "heNormal",
       name: "value_hidden",
     })
@@ -150,7 +395,7 @@ function createOptimalModel(gridSize: number): tf.LayersModel {
   return tf.model({
     inputs: input,
     outputs: [policyLogits, value],
-    name: "snake_policy_value_optimal",
+    name: "snake_transformers_policy_value",
   });
 }
 
@@ -239,7 +484,7 @@ export async function ensureTfjsBackend(): Promise<void> {
   await backendInitPromise;
 }
 
-export class ConvDQN {
+export class PolicyValueTransformer {
   private readonly width: number;
   private readonly area: number;
   private readonly model: tf.LayersModel;
@@ -251,7 +496,7 @@ export class ConvDQN {
   constructor(gridSize = GRID_SIZE) {
     this.width = gridSize;
     this.area = this.width * this.width;
-    this.model = createOptimalModel(this.width);
+    this.model = createTransformerModel(this.width);
     this.optimizer = tf.train.adam(
       LEARNING_RATE,
       ADAM_BETA1,
@@ -264,11 +509,7 @@ export class ConvDQN {
   }
 
   public act(input: ArrayLike<number>, sample = true): PolicyAction {
-    const prediction = this.predict(
-      input,
-      this.singlePolicyScratch,
-      this.singleLogitsScratch,
-    );
+    const prediction = this.predict(input, this.singlePolicyScratch);
     const action = sample
       ? sampleFromDistribution(prediction.policy)
       : argMax(prediction.policy);
@@ -283,9 +524,9 @@ export class ConvDQN {
   public predict(
     input: ArrayLike<number>,
     policyTarget: Float32Array = new Float32Array(OUTPUTS),
-    logitsTarget: Float32Array = new Float32Array(OUTPUTS),
   ): PolicyValuePrediction {
     this.writeObservationToNhwc(input, this.singleInputScratch, 0);
+    const logitsTarget = this.singleLogitsScratch;
 
     let value = 0;
     tf.tidy(() => {
@@ -307,7 +548,6 @@ export class ConvDQN {
 
     return {
       policy: policyTarget,
-      logits: logitsTarget,
       value,
     };
   }

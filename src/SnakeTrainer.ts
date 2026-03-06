@@ -15,12 +15,12 @@ import {
   observationSize,
 } from "./config";
 import {
-  CHECKPOINT_MODEL_KEY,
+  CHECKPOINT_POLICY_VALUE_MODEL_KEY,
   type CheckpointStats,
   loadCheckpointStats,
   saveCheckpointStats,
 } from "./checkpointStore";
-import { argMax, ConvDQN } from "./ConvDQN";
+import { argMax, PolicyValueTransformer } from "./PolicyValueTransformer";
 import { SnakeEnvironment } from "./SnakeEnvironment";
 import type { Agent, TrainerState } from "./types";
 
@@ -42,7 +42,7 @@ type PendingPpoUpdate = {
   batches: number;
 };
 
-const CHECKPOINT_VERSION = 1;
+const CHECKPOINT_VERSION = 2;
 
 function shuffleIndices(indices: Int32Array): void {
   for (let i = indices.length - 1; i > 0; i--) {
@@ -62,7 +62,7 @@ function ema(previous: number, next: number): number {
 
 export class SnakeTrainer {
   private readonly environment = new SnakeEnvironment();
-  private online = new ConvDQN();
+  private policyValueNetwork = new PolicyValueTransformer();
 
   private trainingAgents: Agent[] = [];
   private trainingStates: Float32Array[] = [];
@@ -81,7 +81,6 @@ export class SnakeTrainer {
   private showcaseAgent: Agent = this.environment.createAgent();
   private showcaseObservation: Float32Array = new Float32Array(observationSize());
   private showcasePolicy = new Float32Array(OUTPUTS);
-  private showcaseLogits = new Float32Array(OUTPUTS);
   private showcaseAction = 0;
   private showcaseValue = 0;
 
@@ -105,8 +104,8 @@ export class SnakeTrainer {
   }
 
   public reset(): void {
-    this.online.dispose();
-    this.online = new ConvDQN();
+    this.policyValueNetwork.dispose();
+    this.policyValueNetwork = new PolicyValueTransformer();
 
     this.trainingAgents = [];
     this.trainingStates = [];
@@ -132,7 +131,6 @@ export class SnakeTrainer {
     this.showcaseAgent = this.environment.createAgent();
     this.showcaseObservation = new Float32Array(observationSize());
     this.showcasePolicy = new Float32Array(OUTPUTS);
-    this.showcaseLogits = new Float32Array(OUTPUTS);
     this.refreshShowcasePrediction();
 
     this.rewardHistory = [];
@@ -214,7 +212,9 @@ export class SnakeTrainer {
 
   public async saveCheckpoint(): Promise<CheckpointStats> {
     const snapshot = this.createCheckpointSnapshot();
-    await this.online.saveToIndexedDb(CHECKPOINT_MODEL_KEY);
+    await this.policyValueNetwork.saveToIndexedDb(
+      CHECKPOINT_POLICY_VALUE_MODEL_KEY,
+    );
     await saveCheckpointStats(snapshot);
     return snapshot;
   }
@@ -239,7 +239,9 @@ export class SnakeTrainer {
       return null;
     }
 
-    const modelLoaded = await this.online.loadFromIndexedDb(CHECKPOINT_MODEL_KEY);
+    const modelLoaded = await this.policyValueNetwork.loadFromIndexedDb(
+      CHECKPOINT_POLICY_VALUE_MODEL_KEY,
+    );
     if (!modelLoaded) {
       return null;
     }
@@ -260,7 +262,7 @@ export class SnakeTrainer {
       const agent = this.trainingAgents[i];
       const state = this.trainingStates[i];
 
-      const decision = this.online.act(state, true);
+      const decision = this.policyValueNetwork.act(state, true);
       const result = this.environment.step(agent, decision.action);
       agent.episodeReturn += result.reward;
 
@@ -293,7 +295,10 @@ export class SnakeTrainer {
 
     const lastValues = new Float32Array(TRAIN_ENVS);
     for (let i = 0; i < TRAIN_ENVS; i++) {
-      lastValues[i] = this.online.act(this.trainingStates[i], false).value;
+      lastValues[i] = this.policyValueNetwork.act(
+        this.trainingStates[i],
+        false,
+      ).value;
     }
 
     this.computeGeneralizedAdvantages(lastValues);
@@ -357,7 +362,7 @@ export class SnakeTrainer {
         miniReturns[i] = this.rolloutReturns[sourceIndex];
       }
 
-      const result = this.online.trainBatch({
+      const result = this.policyValueNetwork.trainBatch({
         observations: miniStates,
         actions: miniActions,
         oldLogProbs: miniOldLogProbs,
@@ -493,10 +498,9 @@ export class SnakeTrainer {
 
   private refreshShowcasePrediction(): void {
     this.environment.observe(this.showcaseAgent, this.showcaseObservation);
-    const prediction = this.online.predict(
+    const prediction = this.policyValueNetwork.predict(
       this.showcaseObservation,
       this.showcasePolicy,
-      this.showcaseLogits,
     );
     this.showcaseValue = prediction.value;
     this.showcaseAction = argMax(this.showcasePolicy);

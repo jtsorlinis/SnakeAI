@@ -11,14 +11,6 @@ export type Agent = {
   episodeReturn: number;
 };
 
-export type Transition = {
-  state: Float32Array;
-  action: number;
-  reward: number;
-  nextState: Float32Array;
-  done: boolean;
-};
-
 export type NetworkState = {
   observation: Float32Array | null;
   policy: Float32Array | null;

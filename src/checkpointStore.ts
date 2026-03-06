@@ -1,12 +1,13 @@
-const CHECKPOINT_DB_NAME = "snake-ppo-checkpoint-db";
+const CHECKPOINT_DB_NAME = "snake-transformers-checkpoint-db";
 const CHECKPOINT_DB_VERSION = 1;
 const CHECKPOINT_STORE_NAME = "checkpoints";
 const CHECKPOINT_STATS_KEY = "latest-stats";
 
-export const CHECKPOINT_MODEL_KEY = "snake-ppo-model";
+export const CHECKPOINT_POLICY_VALUE_MODEL_KEY =
+  "snake-transformers-policy-value-model";
 
 export type CheckpointStats = {
-  version: 1;
+  version: number;
   savedAtMs: number;
   gridSize: number;
   episodeCount: number;
