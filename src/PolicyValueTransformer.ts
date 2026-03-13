@@ -42,6 +42,17 @@ export type PolicyValuePrediction = {
   value: number;
 };
 
+type BatchPolicyPrediction = {
+  policy: Float32Array;
+  values: Float32Array;
+};
+
+type BatchPolicyAction = {
+  actions: Int32Array;
+  logProbs: Float32Array;
+  values: Float32Array;
+};
+
 let backendInitPromise: Promise<void> | null = null;
 
 const STEM_CHANNELS = 24;
@@ -596,64 +607,90 @@ function createTransformerModel(gridSize: number): tf.LayersModel {
   });
 }
 
-function softmax(
+function softmaxInto(
   logits: ArrayLike<number>,
+  logitsOffset: number,
   target: Float32Array,
-): Float32Array {
+  targetOffset: number,
+  length: number,
+): void {
   let max = Number.NEGATIVE_INFINITY;
-  for (let i = 0; i < logits.length; i++) {
-    max = Math.max(max, logits[i]);
+  for (let i = 0; i < length; i++) {
+    max = Math.max(max, logits[logitsOffset + i]);
   }
 
   let sum = 0;
-  for (let i = 0; i < logits.length; i++) {
-    const value = Math.exp(logits[i] - max);
-    target[i] = value;
+  for (let i = 0; i < length; i++) {
+    const value = Math.exp(logits[logitsOffset + i] - max);
+    target[targetOffset + i] = value;
     sum += value;
   }
 
   if (sum <= 0) {
-    const uniform = 1 / target.length;
-    for (let i = 0; i < target.length; i++) {
-      target[i] = uniform;
+    const uniform = 1 / length;
+    for (let i = 0; i < length; i++) {
+      target[targetOffset + i] = uniform;
     }
-    return target;
+    return;
   }
 
   const inv = 1 / sum;
-  for (let i = 0; i < target.length; i++) {
-    target[i] *= inv;
+  for (let i = 0; i < length; i++) {
+    target[targetOffset + i] *= inv;
   }
+}
 
+function softmax(
+  logits: ArrayLike<number>,
+  target: Float32Array,
+): Float32Array {
+  softmaxInto(logits, 0, target, 0, target.length);
   return target;
 }
 
-function sampleFromDistribution(probabilities: ArrayLike<number>): number {
+function sampleFromDistributionRange(
+  probabilities: ArrayLike<number>,
+  offset: number,
+  length: number,
+): number {
   const threshold = Math.random();
   let cumulative = 0;
 
-  for (let i = 0; i < probabilities.length; i++) {
-    cumulative += probabilities[i];
+  for (let i = 0; i < length; i++) {
+    cumulative += probabilities[offset + i];
     if (threshold <= cumulative) {
       return i;
     }
   }
 
-  return probabilities.length - 1;
+  return length - 1;
 }
 
-function argMax(values: ArrayLike<number>): number {
+function sampleFromDistribution(probabilities: ArrayLike<number>): number {
+  return sampleFromDistributionRange(probabilities, 0, probabilities.length);
+}
+
+function argMaxRange(
+  values: ArrayLike<number>,
+  offset: number,
+  length: number,
+): number {
   let bestIndex = 0;
   let bestValue = Number.NEGATIVE_INFINITY;
 
-  for (let i = 0; i < values.length; i++) {
-    if (values[i] > bestValue) {
-      bestValue = values[i];
+  for (let i = 0; i < length; i++) {
+    const value = values[offset + i];
+    if (value > bestValue) {
+      bestValue = value;
       bestIndex = i;
     }
   }
 
   return bestIndex;
+}
+
+function argMax(values: ArrayLike<number>): number {
+  return argMaxRange(values, 0, values.length);
 }
 
 export async function ensureTfjsBackend(): Promise<void> {
@@ -749,6 +786,79 @@ export class PolicyValueTransformer {
     };
   }
 
+  public predictBatch(
+    inputs: readonly ArrayLike<number>[],
+    policyTarget: Float32Array = new Float32Array(inputs.length * OUTPUTS),
+    valueTarget: Float32Array = new Float32Array(inputs.length),
+  ): BatchPolicyPrediction {
+    const batchSize = inputs.length;
+    if (batchSize === 0) {
+      return {
+        policy: policyTarget,
+        values: valueTarget,
+      };
+    }
+
+    const logitsTarget = new Float32Array(batchSize * OUTPUTS);
+    const statesData = this.encodeObservationBatch(inputs);
+
+    tf.tidy(() => {
+      const state = tf.tensor4d(statesData, [
+        batchSize,
+        this.width,
+        this.width,
+        OBS_CHANNELS,
+      ]);
+      const [policyLogits, valueTensor] = this.predictPolicyAndValue(
+        state,
+        false,
+      );
+      logitsTarget.set(policyLogits.dataSync());
+      valueTarget.set(valueTensor.dataSync());
+    });
+
+    for (let i = 0; i < batchSize; i++) {
+      softmaxInto(
+        logitsTarget,
+        i * OUTPUTS,
+        policyTarget,
+        i * OUTPUTS,
+        OUTPUTS,
+      );
+    }
+
+    return {
+      policy: policyTarget,
+      values: valueTarget,
+    };
+  }
+
+  public actBatch(
+    inputs: readonly ArrayLike<number>[],
+    sample = true,
+  ): BatchPolicyAction {
+    const prediction = this.predictBatch(inputs);
+    const actions = new Int32Array(inputs.length);
+    const logProbs = new Float32Array(inputs.length);
+
+    for (let i = 0; i < inputs.length; i++) {
+      const policyOffset = i * OUTPUTS;
+      const action = sample
+        ? sampleFromDistributionRange(prediction.policy, policyOffset, OUTPUTS)
+        : argMaxRange(prediction.policy, policyOffset, OUTPUTS);
+      actions[i] = action;
+      logProbs[i] = Math.log(
+        Math.max(LOG_EPSILON, prediction.policy[policyOffset + action]),
+      );
+    }
+
+    return {
+      actions,
+      logProbs,
+      values: prediction.values,
+    };
+  }
+
   public trainBatch(inputs: PPOTrainInputs): PPOTrainResult {
     const batchSize = inputs.observations.length;
     if (
@@ -768,16 +878,7 @@ export class PolicyValueTransformer {
       };
     }
 
-    const channelSize = this.area * OBS_CHANNELS;
-    const statesData = new Float32Array(batchSize * channelSize);
-
-    for (let i = 0; i < batchSize; i++) {
-      this.writeObservationToNhwc(
-        inputs.observations[i],
-        statesData,
-        i * channelSize,
-      );
-    }
+    const statesData = this.encodeObservationBatch(inputs.observations);
 
     return tf.tidy(() => {
       const statesTensor = tf.tensor4d(statesData, [
@@ -791,7 +892,14 @@ export class PolicyValueTransformer {
       const advantagesTensor = tf.tensor1d(inputs.advantages, "float32");
       const returnsTensor = tf.tensor1d(inputs.returns, "float32");
 
-      const optimizedLoss = this.optimizer.minimize(() => {
+      let totalLossTensor: tf.Scalar | null = null;
+      let policyLossTensor: tf.Scalar | null = null;
+      let valueLossTensor: tf.Scalar | null = null;
+      let entropyTensor: tf.Scalar | null = null;
+      let approxKlTensor: tf.Scalar | null = null;
+      let clipFractionTensor: tf.Scalar | null = null;
+
+      const { grads } = tf.variableGrads(() => {
         const [policyLogits, values] = this.predictPolicyAndValue(
           statesTensor,
           true,
@@ -807,35 +915,56 @@ export class PolicyValueTransformer {
           inputs.valueLossCoef,
           inputs.entropyCoef,
         );
-        return terms.totalLoss;
-      }, true);
+        const totalLoss = tf.keep(terms.totalLoss);
+        totalLossTensor = totalLoss;
+        policyLossTensor = tf.keep(terms.policyLoss);
+        valueLossTensor = tf.keep(terms.valueLoss);
+        entropyTensor = tf.keep(terms.entropy);
+        approxKlTensor = tf.keep(terms.approxKl);
+        clipFractionTensor = tf.keep(terms.clipFraction);
+        return totalLoss;
+      });
 
-      const [policyLogits, values] = this.predictPolicyAndValue(
-        statesTensor,
-        false,
-      );
-      const terms = this.computeLossTerms(
-        policyLogits,
-        values,
-        actionsTensor,
-        oldLogProbsTensor,
-        advantagesTensor,
-        returnsTensor,
-        inputs.clipRange,
-        inputs.valueLossCoef,
-        inputs.entropyCoef,
-      );
+      this.optimizer.applyGradients(grads);
+      for (const grad of Object.values(grads)) {
+        grad.dispose();
+      }
 
-      return {
-        totalLoss: optimizedLoss
-          ? optimizedLoss.dataSync()[0]
-          : terms.totalLoss.dataSync()[0],
-        policyLoss: terms.policyLoss.dataSync()[0],
-        valueLoss: terms.valueLoss.dataSync()[0],
-        entropy: terms.entropy.dataSync()[0],
-        approxKl: terms.approxKl.dataSync()[0],
-        clipFraction: terms.clipFraction.dataSync()[0],
+      if (
+        totalLossTensor == null ||
+        policyLossTensor == null ||
+        valueLossTensor == null ||
+        entropyTensor == null ||
+        approxKlTensor == null ||
+        clipFractionTensor == null
+      ) {
+        throw new Error("Failed to capture PPO loss tensors for this minibatch.");
+      }
+
+      const totalLoss = totalLossTensor as tf.Scalar;
+      const policyLoss = policyLossTensor as tf.Scalar;
+      const valueLoss = valueLossTensor as tf.Scalar;
+      const entropy = entropyTensor as tf.Scalar;
+      const approxKl = approxKlTensor as tf.Scalar;
+      const clipFraction = clipFractionTensor as tf.Scalar;
+
+      const result = {
+        totalLoss: totalLoss.dataSync()[0],
+        policyLoss: policyLoss.dataSync()[0],
+        valueLoss: valueLoss.dataSync()[0],
+        entropy: entropy.dataSync()[0],
+        approxKl: approxKl.dataSync()[0],
+        clipFraction: clipFraction.dataSync()[0],
       };
+
+      totalLoss.dispose();
+      policyLoss.dispose();
+      valueLoss.dispose();
+      entropy.dispose();
+      approxKl.dispose();
+      clipFraction.dispose();
+
+      return result;
     });
   }
 
@@ -942,6 +1071,20 @@ export class PolicyValueTransformer {
       approxKl,
       clipFraction,
     };
+  }
+
+  private encodeObservationBatch(
+    inputs: readonly ArrayLike<number>[],
+  ): Float32Array {
+    const batchSize = inputs.length;
+    const channelSize = this.area * OBS_CHANNELS;
+    const statesData = new Float32Array(batchSize * channelSize);
+
+    for (let i = 0; i < batchSize; i++) {
+      this.writeObservationToNhwc(inputs[i], statesData, i * channelSize);
+    }
+
+    return statesData;
   }
 
   private writeObservationToNhwc(

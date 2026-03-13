@@ -162,9 +162,9 @@ export class SnakeTrainer {
         if (this.rolloutStep >= PPO_ROLLOUT_STEPS) {
           this.beginPpoUpdate();
         }
-      }
 
-      this.stepShowcase();
+        this.stepShowcase();
+      }
     }
 
     return envSteps;
@@ -257,22 +257,25 @@ export class SnakeTrainer {
 
   private stepTrainingEnvironments(): void {
     const rolloutOffset = this.rolloutStep * TRAIN_ENVS;
+    const decisions = this.policyValueNetwork.actBatch(
+      this.trainingStates,
+      true,
+    );
 
     for (let i = 0; i < TRAIN_ENVS; i++) {
       const agent = this.trainingAgents[i];
       const state = this.trainingStates[i];
-
-      const decision = this.policyValueNetwork.act(state, true);
-      const result = this.environment.step(agent, decision.action);
+      const action = decisions.actions[i];
+      const result = this.environment.step(agent, action);
       agent.episodeReturn += result.reward;
 
       const writeIndex = rolloutOffset + i;
       this.rolloutStates[writeIndex] = state;
-      this.rolloutActions[writeIndex] = decision.action;
+      this.rolloutActions[writeIndex] = action;
       this.rolloutRewards[writeIndex] = result.reward;
       this.rolloutDones[writeIndex] = result.done ? 1 : 0;
-      this.rolloutValues[writeIndex] = decision.value;
-      this.rolloutLogProbs[writeIndex] = decision.logProb;
+      this.rolloutValues[writeIndex] = decisions.values[i];
+      this.rolloutLogProbs[writeIndex] = decisions.logProbs[i];
       this.totalSteps += 1;
 
       if (result.done) {
@@ -293,13 +296,9 @@ export class SnakeTrainer {
       return;
     }
 
-    const lastValues = new Float32Array(TRAIN_ENVS);
-    for (let i = 0; i < TRAIN_ENVS; i++) {
-      lastValues[i] = this.policyValueNetwork.act(
-        this.trainingStates[i],
-        false,
-      ).value;
-    }
+    const lastValues = this.policyValueNetwork.predictBatch(
+      this.trainingStates,
+    ).values;
 
     this.computeGeneralizedAdvantages(lastValues);
     this.normalizeAdvantages(batchSize);
