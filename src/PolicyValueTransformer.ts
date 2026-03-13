@@ -44,14 +44,16 @@ export type PolicyValuePrediction = {
 
 let backendInitPromise: Promise<void> | null = null;
 
-const TRANSFORMER_MODEL_DIM = 64;
+const STEM_CHANNELS = 24;
+const TRANSFORMER_MODEL_DIM = 48;
 const TRANSFORMER_HEADS = 4;
 const TRANSFORMER_BLOCKS = 2;
-const TRANSFORMER_FF_DIM = 128;
-const TRANSFORMER_LAYER_NORM_EPSILON = 1e-6;
+const TRANSFORMER_FF_DIM = 96;
+const HEAD_HIDDEN_DIM = 96;
+const TRANSFORMER_LAYER_NORM_EPSILON = 1e-5;
 
-type PositionEncodingLayerArgs = {
-  tokenCount: number;
+type GridPositionEncodingLayerArgs = {
+  gridSize: number;
   modelDim: number;
   name?: string;
 };
@@ -62,23 +64,35 @@ type ScaledDotProductAttentionArgs = {
   name?: string;
 };
 
+type TokenPoolingLayerArgs = {
+  modelDim: number;
+  name?: string;
+};
+
+type HeadTokenSelectorLayerArgs = {
+  tokenCount: number;
+  modelDim: number;
+  headChannelIndex: number;
+  name?: string;
+};
+
 function isShapeList(
   shape: tf.Shape | tf.Shape[],
 ): shape is tf.Shape[] {
   return Array.isArray(shape) && Array.isArray(shape[0]);
 }
 
-function createSinusoidalPositionEncoding(
-  tokenCount: number,
+function createAxisPositionEncoding(
+  length: number,
   modelDim: number,
 ): Float32Array {
-  const encoding = new Float32Array(tokenCount * modelDim);
+  const encoding = new Float32Array(length * modelDim);
 
-  for (let token = 0; token < tokenCount; token++) {
-    const rowOffset = token * modelDim;
+  for (let position = 0; position < length; position++) {
+    const rowOffset = position * modelDim;
 
     for (let dim = 0; dim < modelDim; dim += 2) {
-      const angle = token / Math.pow(10000, dim / modelDim);
+      const angle = position / Math.pow(10000, dim / modelDim);
       encoding[rowOffset + dim] = Math.sin(angle);
 
       if (dim + 1 < modelDim) {
@@ -90,19 +104,48 @@ function createSinusoidalPositionEncoding(
   return encoding;
 }
 
-class SinusoidalPositionEncoding extends tf.layers.Layer {
-  public static className = "SinusoidalPositionEncoding";
+function createGridPositionEncoding(
+  gridSize: number,
+  modelDim: number,
+): Float32Array {
+  if (modelDim % 2 !== 0) {
+    throw new Error(
+      `Transformer modelDim (${modelDim}) must be even for 2D positional encoding.`,
+    );
+  }
 
-  private readonly tokenCount: number;
+  const axisDim = modelDim / 2;
+  const rows = createAxisPositionEncoding(gridSize, axisDim);
+  const columns = createAxisPositionEncoding(gridSize, axisDim);
+  const encoding = new Float32Array(gridSize * gridSize * modelDim);
+
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      const tokenOffset = (y * gridSize + x) * modelDim;
+      encoding.set(rows.subarray(y * axisDim, (y + 1) * axisDim), tokenOffset);
+      encoding.set(
+        columns.subarray(x * axisDim, (x + 1) * axisDim),
+        tokenOffset + axisDim,
+      );
+    }
+  }
+
+  return encoding;
+}
+
+class GridPositionEncoding extends tf.layers.Layer {
+  public static className = "GridPositionEncoding";
+
+  private readonly gridSize: number;
   private readonly modelDim: number;
   private readonly encodingValues: Float32Array;
 
-  constructor(args: PositionEncodingLayerArgs) {
+  constructor(args: GridPositionEncodingLayerArgs) {
     super(args);
-    this.tokenCount = args.tokenCount;
+    this.gridSize = args.gridSize;
     this.modelDim = args.modelDim;
-    this.encodingValues = createSinusoidalPositionEncoding(
-      this.tokenCount,
+    this.encodingValues = createGridPositionEncoding(
+      this.gridSize,
       this.modelDim,
     );
   }
@@ -120,7 +163,7 @@ class SinusoidalPositionEncoding extends tf.layers.Layer {
     return tf.tidy(() => {
       const encoding = tf.tensor3d(this.encodingValues, [
         1,
-        this.tokenCount,
+        this.gridSize * this.gridSize,
         this.modelDim,
       ]);
 
@@ -131,8 +174,109 @@ class SinusoidalPositionEncoding extends tf.layers.Layer {
   public getConfig(): tf.serialization.ConfigDict {
     return {
       ...super.getConfig(),
+      gridSize: this.gridSize,
+      modelDim: this.modelDim,
+    };
+  }
+}
+
+class TokenPooling extends tf.layers.Layer {
+  public static className = "TokenPooling";
+
+  private readonly modelDim: number;
+
+  constructor(args: TokenPoolingLayerArgs) {
+    super(args);
+    this.modelDim = args.modelDim;
+  }
+
+  public computeOutputShape(inputShape: tf.Shape | tf.Shape[]): tf.Shape | tf.Shape[] {
+    if (isShapeList(inputShape) || !Array.isArray(inputShape) || inputShape.length !== 3) {
+      throw new Error("TokenPooling expects a single [batch, tokens, channels] shape.");
+    }
+
+    return [inputShape[0] ?? null, this.modelDim * 2];
+  }
+
+  public call(
+    inputs: tf.Tensor | tf.Tensor[],
+    _kwargs: Record<string, unknown>,
+  ): tf.Tensor | tf.Tensor[] {
+    const input = Array.isArray(inputs) ? inputs[0] : inputs;
+
+    return tf.tidy(() => {
+      const tokens = input as tf.Tensor3D;
+      const mean = tf.mean(tokens, 1);
+      const max = tf.max(tokens, 1);
+      return tf.concat([mean, max], 1);
+    });
+  }
+
+  public getConfig(): tf.serialization.ConfigDict {
+    return {
+      ...super.getConfig(),
+      modelDim: this.modelDim,
+    };
+  }
+}
+
+class HeadTokenSelector extends tf.layers.Layer {
+  public static className = "HeadTokenSelector";
+
+  private readonly tokenCount: number;
+  private readonly modelDim: number;
+  private readonly headChannelIndex: number;
+
+  constructor(args: HeadTokenSelectorLayerArgs) {
+    super(args);
+    this.tokenCount = args.tokenCount;
+    this.modelDim = args.modelDim;
+    this.headChannelIndex = args.headChannelIndex;
+  }
+
+  public computeOutputShape(inputShape: tf.Shape | tf.Shape[]): tf.Shape | tf.Shape[] {
+    if (!isShapeList(inputShape) || inputShape.length !== 2) {
+      throw new Error(
+        "HeadTokenSelector expects [encodedTokensShape, observationShape].",
+      );
+    }
+
+    return [inputShape[0][0] ?? null, this.modelDim];
+  }
+
+  public call(
+    inputs: tf.Tensor | tf.Tensor[],
+    _kwargs: Record<string, unknown>,
+  ): tf.Tensor | tf.Tensor[] {
+    if (!Array.isArray(inputs) || inputs.length !== 2) {
+      throw new Error("HeadTokenSelector expects [encodedTokens, observation].");
+    }
+
+    const [encodedTokens, observation] = inputs as [tf.Tensor3D, tf.Tensor4D];
+    const observedTokenCount = encodedTokens.shape[1];
+
+    if (observedTokenCount == null || observedTokenCount !== this.tokenCount) {
+      throw new Error(
+        `HeadTokenSelector expected ${this.tokenCount} tokens, received ${observedTokenCount}.`,
+      );
+    }
+
+    return tf.tidy(() => {
+      const batchSize = observation.shape[0] ?? -1;
+      const headMask = observation
+        .slice([0, 0, 0, this.headChannelIndex], [-1, -1, -1, 1])
+        .reshape([batchSize, this.tokenCount, 1]);
+
+      return encodedTokens.mul(headMask).sum(1);
+    });
+  }
+
+  public getConfig(): tf.serialization.ConfigDict {
+    return {
+      ...super.getConfig(),
       tokenCount: this.tokenCount,
       modelDim: this.modelDim,
+      headChannelIndex: this.headChannelIndex,
     };
   }
 }
@@ -220,31 +364,57 @@ class ScaledDotProductAttention extends tf.layers.Layer {
   }
 }
 
-tf.serialization.registerClass(SinusoidalPositionEncoding);
+tf.serialization.registerClass(GridPositionEncoding);
 tf.serialization.registerClass(ScaledDotProductAttention);
+tf.serialization.registerClass(TokenPooling);
+tf.serialization.registerClass(HeadTokenSelector);
 
 function createTransformerModel(gridSize: number): tf.LayersModel {
   const tokenCount = gridSize * gridSize;
   const input = tf.input({ shape: [gridSize, gridSize, OBS_CHANNELS] });
 
   let trunk = tf.layers
-    .reshape({
-      targetShape: [tokenCount, OBS_CHANNELS],
-      name: "board_tokens",
+    .conv2d({
+      filters: STEM_CHANNELS,
+      kernelSize: 3,
+      padding: "same",
+      activation: "relu",
+      kernelInitializer: "heNormal",
+      name: "stem_conv1",
     })
     .apply(input) as tf.SymbolicTensor;
 
   trunk = tf.layers
-    .dense({
-      units: TRANSFORMER_MODEL_DIM,
-      activation: "linear",
-      kernelInitializer: "glorotUniform",
-      name: "token_projection",
+    .conv2d({
+      filters: STEM_CHANNELS,
+      kernelSize: 3,
+      padding: "same",
+      activation: "relu",
+      kernelInitializer: "heNormal",
+      name: "stem_conv2",
     })
     .apply(trunk) as tf.SymbolicTensor;
 
-  trunk = new SinusoidalPositionEncoding({
-    tokenCount,
+  trunk = tf.layers
+    .conv2d({
+      filters: TRANSFORMER_MODEL_DIM,
+      kernelSize: 1,
+      padding: "same",
+      activation: "linear",
+      kernelInitializer: "heNormal",
+      name: "stem_projection",
+    })
+    .apply(trunk) as tf.SymbolicTensor;
+
+  trunk = tf.layers
+    .reshape({
+      targetShape: [tokenCount, TRANSFORMER_MODEL_DIM],
+      name: "board_tokens",
+    })
+    .apply(trunk) as tf.SymbolicTensor;
+
+  trunk = new GridPositionEncoding({
+    gridSize,
     modelDim: TRANSFORMER_MODEL_DIM,
     name: "position_encoding",
   }).apply(trunk) as tf.SymbolicTensor;
@@ -320,7 +490,7 @@ function createTransformerModel(gridSize: number): tf.LayersModel {
     let feedForward = tf.layers
       .dense({
         units: TRANSFORMER_FF_DIM,
-        activation: "gelu",
+        activation: "relu",
         kernelInitializer: "heNormal",
         name: `${prefix}_ff_expand`,
       })
@@ -348,18 +518,49 @@ function createTransformerModel(gridSize: number): tf.LayersModel {
     })
     .apply(trunk) as tf.SymbolicTensor;
 
-  const policyFlat = tf.layers
-    .flatten({ name: "policy_flatten" })
-    .apply(encoded) as tf.SymbolicTensor;
+  const pooled = new TokenPooling({
+    modelDim: TRANSFORMER_MODEL_DIM,
+    name: "token_pooling",
+  }).apply(encoded) as tf.SymbolicTensor;
+
+  const pooledFeatures = tf.layers
+    .layerNormalization({
+      axis: -1,
+      epsilon: TRANSFORMER_LAYER_NORM_EPSILON,
+      name: "pooled_norm",
+    })
+    .apply(pooled) as tf.SymbolicTensor;
+
+  const headToken = new HeadTokenSelector({
+    tokenCount,
+    modelDim: TRANSFORMER_MODEL_DIM,
+    headChannelIndex: 1,
+    name: "head_token_selector",
+  }).apply([encoded, input]) as tf.SymbolicTensor;
+
+  const headFeatures = tf.layers
+    .layerNormalization({
+      axis: -1,
+      epsilon: TRANSFORMER_LAYER_NORM_EPSILON,
+      name: "head_token_norm",
+    })
+    .apply(headToken) as tf.SymbolicTensor;
+
+  const summaryFeatures = tf.layers
+    .concatenate({
+      axis: -1,
+      name: "summary_features",
+    })
+    .apply([pooledFeatures, headFeatures]) as tf.SymbolicTensor;
 
   const policyHidden = tf.layers
     .dense({
-      units: 128,
-      activation: "gelu",
+      units: HEAD_HIDDEN_DIM,
+      activation: "relu",
       kernelInitializer: "heNormal",
       name: "policy_hidden",
     })
-    .apply(policyFlat) as tf.SymbolicTensor;
+    .apply(summaryFeatures) as tf.SymbolicTensor;
 
   const policyLogits = tf.layers
     .dense({
@@ -370,18 +571,14 @@ function createTransformerModel(gridSize: number): tf.LayersModel {
     })
     .apply(policyHidden) as tf.SymbolicTensor;
 
-  const valueFlat = tf.layers
-    .flatten({ name: "value_flatten" })
-    .apply(encoded) as tf.SymbolicTensor;
-
   const valueHidden = tf.layers
     .dense({
-      units: 128,
-      activation: "gelu",
+      units: HEAD_HIDDEN_DIM,
+      activation: "relu",
       kernelInitializer: "heNormal",
       name: "value_hidden",
     })
-    .apply(valueFlat) as tf.SymbolicTensor;
+    .apply(summaryFeatures) as tf.SymbolicTensor;
 
   const value = tf.layers
     .dense({

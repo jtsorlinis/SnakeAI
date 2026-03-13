@@ -4,7 +4,7 @@ const CHECKPOINT_STORE_NAME = "checkpoints";
 const CHECKPOINT_STATS_KEY = "latest-stats";
 
 export const CHECKPOINT_POLICY_VALUE_MODEL_KEY =
-  "snake-transformers-policy-value-model";
+  "snake-transformers-policy-value-model-v2";
 
 export type CheckpointStats = {
   version: number;

@@ -42,7 +42,7 @@ type PendingPpoUpdate = {
   batches: number;
 };
 
-const CHECKPOINT_VERSION = 2;
+const CHECKPOINT_VERSION = 3;
 
 function shuffleIndices(indices: Int32Array): void {
   for (let i = indices.length - 1; i > 0; i--) {

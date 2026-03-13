@@ -41,7 +41,7 @@ export const PPO_MINIBATCH_SIZE = 256;
 
 export const GAMMA = 0.99;
 export const GAE_LAMBDA = 0.95;
-export const LEARNING_RATE = 0.0003;
+export const LEARNING_RATE = 0.0001;
 export const ADAM_BETA1 = 0.9;
 export const ADAM_BETA2 = 0.999;
 export const ADAM_EPSILON = 1e-8;
