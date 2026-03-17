@@ -10,12 +10,14 @@ import {
 } from "./config";
 import { SnakeRenderer } from "./SnakeRenderer";
 import { SnakeTrainer } from "./SnakeTrainer";
+import type { TrainerAlgorithm } from "./types";
 
 export class Game {
   private trainer = new SnakeTrainer();
   private readonly renderer: SnakeRenderer;
   private readonly turboToggle: HTMLInputElement;
   private readonly leftViewToggle: HTMLInputElement;
+  private readonly algorithmSelect: HTMLSelectElement;
   private readonly gridDownButton: HTMLButtonElement;
   private readonly gridUpButton: HTMLButtonElement;
   private readonly resetButton: HTMLButtonElement;
@@ -33,6 +35,7 @@ export class Game {
     const statsElement = this.getElement("stats");
     this.turboToggle = this.getInput("turboToggle");
     this.leftViewToggle = this.getInput("leftViewToggle");
+    this.algorithmSelect = this.getSelect("algorithmSelect");
     this.gridDownButton = this.getButton("gridDown");
     this.gridUpButton = this.getButton("gridUp");
     this.resetButton = this.getButton("resetTraining");
@@ -56,6 +59,13 @@ export class Game {
     this.leftViewToggle.addEventListener("change", () => {
       this.showMiniBoardsInLeft = this.leftViewToggle.checked;
       this.renderer.setShowMiniBoardsInLeft(this.showMiniBoardsInLeft);
+    });
+
+    this.trainer.setAlgorithm(this.algorithmSelect.value as TrainerAlgorithm);
+    this.algorithmSelect.addEventListener("change", () => {
+      this.trainer.setAlgorithm(this.algorithmSelect.value as TrainerAlgorithm);
+      this.stepBudget = 0;
+      this.lastFrameTime = 0;
     });
 
     this.gridDownButton.addEventListener("click", () => {
@@ -92,6 +102,14 @@ export class Game {
     const element = document.getElementById(id);
     if (!(element instanceof HTMLInputElement)) {
       throw new Error(`Missing input: ${id}`);
+    }
+    return element;
+  }
+
+  private getSelect(id: string): HTMLSelectElement {
+    const element = document.getElementById(id);
+    if (!(element instanceof HTMLSelectElement)) {
+      throw new Error(`Missing select: ${id}`);
     }
     return element;
   }

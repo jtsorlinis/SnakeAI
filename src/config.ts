@@ -17,6 +17,14 @@ export const CHART_HEIGHT = 140;
 export const MULTI_VIEW_COUNT = 25;
 export const MULTI_VIEW_COLUMNS = 5;
 
+export const POP_SIZE = 180;
+export const ELITE_COUNT = 8;
+export const TOURNAMENT_SIZE = 4;
+export const MUTATION_RATE = 0.08;
+export const MUTATION_SIZE = 0.35;
+export const ES_PARENT_COUNT = 12;
+export const ES_SIGMA = 0.12;
+export const CMA_INITIAL_SIGMA = 0.55;
 export const ROLLOUT_BATCH_SIZE = 180;
 export const PPO_GAMMA = 1;
 export const PPO_GAE_LAMBDA = 0.95;

@@ -1,6 +1,8 @@
 export type Point = { x: number; y: number };
 
 export type PolicyParams = Float32Array;
+export type TrainerAlgorithm = "ppo" | "ga" | "es" | "cmaes";
+export type PolicyPlaybackMode = "greedy" | "stochastic";
 
 export type TerminalReason = "collision" | "hunger" | "solved" | null;
 
@@ -25,17 +27,35 @@ export type NetworkActivations = {
 };
 
 export type TrainerState = {
+  algorithm: TrainerAlgorithm;
   boardAgent: Agent;
   boardAgents: readonly Agent[];
   fitnessHistory: readonly number[];
-  ppoUpdate: number;
+  iteration: number;
+  iterationLabel: string;
   alive: number;
-  rolloutBatchSize: number;
+  batchSize: number;
+  batchSizeLabel: string;
   bestEverScore: number;
   bestEverFitness: number;
-  updatesSinceBest: number;
+  staleIterations: number;
+  staleLabel: string;
+  historyLabel: string;
+  policySourceLabel: string;
+  playbackMode: PolicyPlaybackMode;
+  playbackModeEnabled: boolean;
   network: {
     policy: PolicyParams | null;
     activations: NetworkActivations | null;
   };
 };
+
+export interface TrainerController {
+  reset(): void;
+  simulate(stepCount: number): void;
+  getState(randomBoardCount?: number): TrainerState;
+  onGridSizeChanged(): void;
+  setPlaybackMode(mode: PolicyPlaybackMode): void;
+  getPlaybackMode(): PolicyPlaybackMode;
+  supportsPlaybackMode(): boolean;
+}

@@ -2,7 +2,6 @@ import {
   BOARD_SIZE,
   CHART_HEIGHT,
   CHART_WIDTH,
-  GRID_SIZE,
   HIDDEN_LAYER_UNITS,
   INPUTS,
   INPUT_LABELS,
@@ -98,7 +97,7 @@ export class SnakeRenderer {
     }
 
     this.drawSingleBoard(state.boardAgent);
-    this.drawHistory(state.fitnessHistory);
+    this.drawHistory(state.fitnessHistory, state.historyLabel);
     this.updateStats(state);
   }
 
@@ -561,7 +560,7 @@ export class SnakeRenderer {
     context.restore();
   }
 
-  private drawHistory(history: readonly number[]): void {
+  private drawHistory(history: readonly number[], label: string): void {
     this.chartCtx.fillStyle = "#000";
     this.chartCtx.fillRect(0, 0, CHART_WIDTH, CHART_HEIGHT);
 
@@ -607,21 +606,17 @@ export class SnakeRenderer {
 
     this.chartCtx.fillStyle = "rgba(255, 255, 255, 0.75)";
     this.chartCtx.font = "12px IBM Plex Mono, monospace";
-    this.chartCtx.fillText(
-      `PPO update best fitness history (max ${maxFitness.toFixed(2)})`,
-      10,
-      16,
-    );
+    this.chartCtx.fillText(`${label} (max ${maxFitness.toFixed(2)})`, 10, 16);
   }
 
   private updateStats(state: TrainerState): void {
     this.stats.innerHTML = [
-      `PPO update: <strong>${state.ppoUpdate}</strong>`,
-      `Alive: ${state.alive}/${state.rolloutBatchSize}`,
-      `Grid: ${GRID_SIZE}x${GRID_SIZE}`,
+      `${state.iterationLabel}: <strong>${state.iteration}</strong>`,
+      `Alive: ${state.alive}/${state.batchSize}`,
+      `${state.batchSizeLabel}: ${state.batchSize}`,
       `Best score: ${state.bestEverScore}`,
       `Best fitness: ${state.bestEverFitness.toFixed(2)}`,
-      `Updates since best: ${state.updatesSinceBest}`,
+      `${state.staleLabel}: ${state.staleIterations}`,
     ].join("<br>");
   }
 }
