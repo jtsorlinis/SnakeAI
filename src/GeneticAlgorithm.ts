@@ -1,28 +1,28 @@
 import {
   ELITE_COUNT,
-  GENE_COUNT,
   GRID_SIZE,
   MUTATION_RATE,
   MUTATION_SIZE,
+  POLICY_PARAM_COUNT,
   POP_SIZE,
   TOURNAMENT_SIZE,
 } from "./config";
-import type { Agent, Genome } from "./types";
+import type { Agent, PolicyParams } from "./types";
 
 const TOURNAMENT_POOL_RATIO = 0.4;
 
 export type EvolutionResult = {
   best: Agent;
-  nextGenomes: Genome[];
+  nextPolicies: PolicyParams[];
 };
 
 export class GeneticAlgorithm {
-  public randomGenome(): Genome {
-    const genome = new Float32Array(GENE_COUNT);
-    for (let i = 0; i < genome.length; i++) {
-      genome[i] = this.randomRange(-1, 1);
+  public randomPolicy(): PolicyParams {
+    const policy = new Float32Array(POLICY_PARAM_COUNT);
+    for (let i = 0; i < policy.length; i++) {
+      policy[i] = this.randomRange(-1, 1);
     }
-    return genome;
+    return policy;
   }
 
   public evolve(population: Agent[]): EvolutionResult {
@@ -31,23 +31,23 @@ export class GeneticAlgorithm {
     }
 
     const ranked = [...population].sort((a, b) => b.fitness - a.fitness);
-    const nextGenomes: Genome[] = [];
+    const nextPolicies: PolicyParams[] = [];
 
     for (let i = 0; i < ELITE_COUNT; i++) {
-      nextGenomes.push(ranked[i].genome);
+      nextPolicies.push(ranked[i].policy);
     }
 
-    while (nextGenomes.length < POP_SIZE) {
+    while (nextPolicies.length < POP_SIZE) {
       const parentA = this.pickParent(ranked);
       const parentB = this.pickParent(ranked);
-      const child = this.crossover(parentA.genome, parentB.genome);
+      const child = this.crossover(parentA.policy, parentB.policy);
       this.mutate(child);
-      nextGenomes.push(child);
+      nextPolicies.push(child);
     }
 
     return {
       best: ranked[0],
-      nextGenomes,
+      nextPolicies,
     };
   }
 
@@ -61,23 +61,23 @@ export class GeneticAlgorithm {
 
   private fitness(agent: Agent): number {
     const foodReward = agent.score;
-    const deathPenalty = !agent.alive && agent.hunger > 0 ? 1 : 0;
+    const deathPenalty = agent.terminalReason === "collision" ? 1 : 0;
     const stepPenalty = agent.steps / (GRID_SIZE * GRID_SIZE);
     return foodReward - deathPenalty - stepPenalty;
   }
 
-  private crossover(a: Genome, b: Genome): Genome {
-    const child = new Float32Array(GENE_COUNT);
-    for (let i = 0; i < GENE_COUNT; i++) {
+  private crossover(a: PolicyParams, b: PolicyParams): PolicyParams {
+    const child = new Float32Array(POLICY_PARAM_COUNT);
+    for (let i = 0; i < POLICY_PARAM_COUNT; i++) {
       child[i] = Math.random() < 0.5 ? a[i] : b[i];
     }
     return child;
   }
 
-  private mutate(genome: Genome): void {
-    for (let i = 0; i < genome.length; i++) {
+  private mutate(policy: PolicyParams): void {
+    for (let i = 0; i < policy.length; i++) {
       if (Math.random() < MUTATION_RATE) {
-        genome[i] += this.randomRange(-MUTATION_SIZE, MUTATION_SIZE);
+        policy[i] += this.randomRange(-MUTATION_SIZE, MUTATION_SIZE);
       }
     }
   }

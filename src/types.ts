@@ -1,9 +1,13 @@
 export type Point = { x: number; y: number };
 
-export type Genome = Float32Array;
+export type PolicyParams = Float32Array;
+export type TrainerAlgorithm = "ppo" | "ga" | "es" | "cmaes";
+export type PolicyPlaybackMode = "greedy" | "stochastic";
+
+export type TerminalReason = "collision" | "hunger" | "solved" | null;
 
 export type Agent = {
-  genome: Genome;
+  policy: PolicyParams;
   body: Point[];
   dir: number;
   food: Point;
@@ -12,6 +16,7 @@ export type Agent = {
   steps: number;
   hunger: number;
   fitness: number;
+  terminalReason: TerminalReason;
 };
 
 export type NetworkActivations = {
@@ -22,17 +27,35 @@ export type NetworkActivations = {
 };
 
 export type TrainerState = {
+  algorithm: TrainerAlgorithm;
   boardAgent: Agent;
   boardAgents: readonly Agent[];
   fitnessHistory: readonly number[];
-  generation: number;
+  iteration: number;
+  iterationLabel: string;
   alive: number;
-  populationSize: number;
+  batchSize: number;
+  batchSizeLabel: string;
   bestEverScore: number;
   bestEverFitness: number;
-  staleGenerations: number;
+  staleIterations: number;
+  staleLabel: string;
+  historyLabel: string;
+  policySourceLabel: string;
+  playbackMode: PolicyPlaybackMode;
+  playbackModeEnabled: boolean;
   network: {
-    genome: Genome | null;
+    policy: PolicyParams | null;
     activations: NetworkActivations | null;
   };
 };
+
+export interface TrainerController {
+  reset(): void;
+  simulate(stepCount: number): void;
+  getState(randomBoardCount?: number): TrainerState;
+  onGridSizeChanged(): void;
+  setPlaybackMode(mode: PolicyPlaybackMode): void;
+  getPlaybackMode(): PolicyPlaybackMode;
+  supportsPlaybackMode(): boolean;
+}

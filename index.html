@@ -3,25 +3,34 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Snake GA Trainer</title>
+    <title>Snake Trainer Lab</title>
   </head>
   <body>
     <main id="app">
       <canvas id="netCanvas" aria-label="Left visualization"></canvas>
       <canvas id="gameCanvas" aria-label="Snake board"></canvas>
       <section class="panel">
-        <h1>Snake GA Trainer</h1>
+        <h1>Snake Trainer Lab</h1>
         <div id="stats" class="stats">Training...</div>
-        <div class="toggle-row">
-          <input id="turboToggle" type="checkbox" />
-          <label for="turboToggle">Turbo (max speed)</label>
-        </div>
-        <div class="toggle-row">
-          <input id="leftViewToggle" type="checkbox" />
-          <label for="leftViewToggle">Visualise population</label>
-        </div>
-        <div class="control-grid">
-          <div class="hidden-controls">
+        <div class="controls-panel">
+          <div class="control-section inline-control">
+            <label class="control-label" for="algorithmSelect">Algorithm</label>
+            <select id="algorithmSelect">
+              <option value="ga">GA</option>
+              <option value="es">ES</option>
+              <option value="cmaes">CMA-ES</option>
+              <option value="ppo">PPO</option>
+            </select>
+          </div>
+          <div class="control-section toggle-row">
+            <input id="turboToggle" type="checkbox" />
+            <label for="turboToggle">Turbo (max speed)</label>
+          </div>
+          <div class="control-section toggle-row">
+            <input id="leftViewToggle" type="checkbox" />
+            <label for="leftViewToggle">Visualise all snakes</label>
+          </div>
+          <div class="control-section hidden-controls">
             <span class="control-label">Grid size</span>
             <div class="hidden-buttons">
               <button
@@ -45,7 +54,7 @@
             </div>
           </div>
         </div>
-        <canvas id="chartCanvas" aria-label="Generation history"></canvas>
+        <canvas id="chartCanvas" aria-label="Training history"></canvas>
       </section>
     </main>
     <script type="module" src="/src/main.ts"></script>

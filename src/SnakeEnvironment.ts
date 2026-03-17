@@ -7,17 +7,25 @@ import {
   OUTPUTS,
 } from "./config";
 import { NeuralNetwork, createNetworkHiddenBuffers } from "./NeuralNetwork";
-import type { Agent, Genome, NetworkActivations, Point } from "./types";
+import type {
+  Agent,
+  PolicyParams,
+  NetworkActivations,
+  Point,
+  PolicyPlaybackMode,
+} from "./types";
 
 export class SnakeEnvironment {
   private readonly actionInputs = new Float32Array(INPUTS);
+  private readonly actionHidden = createNetworkHiddenBuffers();
+  private readonly actionOutputs = new Float32Array(OUTPUTS);
   private readonly vizInputs = new Float32Array(INPUTS);
   private readonly vizHidden = createNetworkHiddenBuffers();
   private readonly vizOutputs = new Float32Array(OUTPUTS);
 
   constructor(private readonly network: NeuralNetwork) {}
 
-  public createAgent(genome: Genome): Agent {
+  public createAgent(policy: PolicyParams): Agent {
     const x = Math.floor(GRID_SIZE / 2);
     const y = Math.floor(GRID_SIZE / 2);
     const body = [
@@ -27,7 +35,7 @@ export class SnakeEnvironment {
     ];
 
     return {
-      genome: new Float32Array(genome),
+      policy: new Float32Array(policy),
       body,
       dir: 1,
       food: this.randomFood(body),
@@ -36,15 +44,41 @@ export class SnakeEnvironment {
       steps: 0,
       hunger: BASE_HUNGER,
       fitness: 0,
+      terminalReason: null,
     };
   }
 
-  public step(agent: Agent): void {
+  public observe(agent: Agent): Float32Array {
+    const observation = new Float32Array(INPUTS);
+    this.senseInto(agent, observation);
+    return observation;
+  }
+
+  public selectAction(
+    agent: Agent,
+    playbackMode: PolicyPlaybackMode = "greedy",
+  ): number {
+    this.senseInto(agent, this.actionInputs);
+
+    if (playbackMode === "stochastic") {
+      this.network.run(
+        agent.policy,
+        this.actionInputs,
+        this.actionHidden,
+        this.actionOutputs,
+      );
+      return this.sampleFromLogits(this.actionOutputs);
+    }
+
+    return this.network.chooseAction(agent.policy, this.actionInputs);
+  }
+
+  public step(agent: Agent, actionOverride?: number): void {
     if (!agent.alive) {
       return;
     }
 
-    const action = this.chooseAction(agent);
+    const action = actionOverride ?? this.selectAction(agent);
     switch (action) {
       case 1:
         agent.dir = (agent.dir + 3) % 4;
@@ -63,6 +97,7 @@ export class SnakeEnvironment {
 
     if (this.outOfBounds(next.x, next.y)) {
       agent.alive = false;
+      agent.terminalReason = "collision";
       return;
     }
 
@@ -71,6 +106,7 @@ export class SnakeEnvironment {
 
     if (this.pointInBody(agent.body, next, len)) {
       agent.alive = false;
+      agent.terminalReason = "collision";
       return;
     }
 
@@ -81,6 +117,7 @@ export class SnakeEnvironment {
 
       if (agent.score >= MAX_SCORE) {
         agent.alive = false;
+        agent.terminalReason = "solved";
         return;
       }
 
@@ -92,11 +129,12 @@ export class SnakeEnvironment {
 
     if (agent.hunger <= 0) {
       agent.alive = false;
+      agent.terminalReason = "hunger";
     }
   }
 
   public computeNetworkActivations(
-    genome: Genome,
+    policy: PolicyParams,
     agent: Agent | null,
   ): NetworkActivations {
     if (agent) {
@@ -106,7 +144,7 @@ export class SnakeEnvironment {
     }
 
     const best = this.network.run(
-      genome,
+      policy,
       this.vizInputs,
       this.vizHidden,
       this.vizOutputs,
@@ -223,8 +261,30 @@ export class SnakeEnvironment {
     target[9] = front.y;
   }
 
-  private chooseAction(agent: Agent): number {
-    this.senseInto(agent, this.actionInputs);
-    return this.network.chooseAction(agent.genome, this.actionInputs);
+  private sampleFromLogits(logits: Float32Array): number {
+    let maxLogit = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < logits.length; i++) {
+      if (logits[i] > maxLogit) {
+        maxLogit = logits[i];
+      }
+    }
+
+    let sum = 0;
+    for (let i = 0; i < logits.length; i++) {
+      const expValue = Math.exp(logits[i] - maxLogit);
+      this.actionOutputs[i] = expValue;
+      sum += expValue;
+    }
+
+    const sample = Math.random() * sum;
+    let cumulative = 0;
+    for (let i = 0; i < this.actionOutputs.length; i++) {
+      cumulative += this.actionOutputs[i];
+      if (sample <= cumulative) {
+        return i;
+      }
+    }
+
+    return this.actionOutputs.length - 1;
   }
 }
