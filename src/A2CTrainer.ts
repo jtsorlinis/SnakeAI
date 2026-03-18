@@ -133,7 +133,7 @@ export class A2CTrainer implements TrainerController {
       staleIterations: Math.max(0, this.a2cUpdate - this.bestFitnessUpdate),
       staleLabel: "Updates since best",
       historyLabel: "A2C best fitness history",
-      policySourceLabel: "Current policy",
+      policySourceLabel: "Best policy",
       playbackMode: "greedy",
       playbackModeEnabled: false,
       network,
@@ -262,6 +262,7 @@ export class A2CTrainer implements TrainerController {
     if (this.a2cUpdate === 1 || best.fitness > this.bestEverFitness) {
       this.bestEverFitness = best.fitness;
       this.bestFitnessUpdate = this.a2cUpdate;
+      this.setDisplayPolicy(this.a2c.getPolicyParams());
     }
 
     this.fitnessHistory.push(best.fitness);
@@ -270,7 +271,6 @@ export class A2CTrainer implements TrainerController {
     }
 
     this.a2c.train(this.trajectories);
-    this.setDisplayPolicy(this.a2c.getPolicyParams());
 
     this.initializeRolloutBatch();
     this.a2cUpdate += 1;

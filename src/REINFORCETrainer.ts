@@ -135,7 +135,7 @@ export class REINFORCETrainer implements TrainerController {
       ),
       staleLabel: "Updates since best",
       historyLabel: "REINFORCE best fitness history",
-      policySourceLabel: "Current policy",
+      policySourceLabel: "Best policy",
       playbackMode: "greedy",
       playbackModeEnabled: false,
       network,
@@ -267,6 +267,7 @@ export class REINFORCETrainer implements TrainerController {
     ) {
       this.bestEverFitness = best.fitness;
       this.bestFitnessUpdate = this.reinforceUpdate;
+      this.setDisplayPolicy(this.reinforce.getPolicyParams());
     }
 
     this.fitnessHistory.push(best.fitness);
@@ -275,7 +276,6 @@ export class REINFORCETrainer implements TrainerController {
     }
 
     this.reinforce.train(this.trajectories);
-    this.setDisplayPolicy(this.reinforce.getPolicyParams());
 
     this.initializeRolloutBatch();
     this.reinforceUpdate += 1;

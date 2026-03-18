@@ -134,7 +134,7 @@ export class PPOTrainer implements TrainerController {
       staleIterations: Math.max(0, this.ppoUpdate - this.bestFitnessUpdate),
       staleLabel: "Updates since best",
       historyLabel: "PPO best fitness history",
-      policySourceLabel: "Current policy",
+      policySourceLabel: "Best policy",
       playbackMode: "greedy",
       playbackModeEnabled: false,
       network,
@@ -263,6 +263,7 @@ export class PPOTrainer implements TrainerController {
     if (this.ppoUpdate === 1 || best.fitness > this.bestEverFitness) {
       this.bestEverFitness = best.fitness;
       this.bestFitnessUpdate = this.ppoUpdate;
+      this.setDisplayPolicy(this.ppo.getPolicyParams());
     }
 
     this.fitnessHistory.push(best.fitness);
@@ -271,7 +272,6 @@ export class PPOTrainer implements TrainerController {
     }
 
     this.ppo.train(this.trajectories);
-    this.setDisplayPolicy(this.ppo.getPolicyParams());
 
     this.initializeRolloutBatch();
     this.ppoUpdate += 1;
