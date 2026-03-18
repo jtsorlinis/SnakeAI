@@ -1,10 +1,13 @@
 import {
   CMA_INITIAL_SIGMA,
+  ES_PARENT_COUNT,
   GRID_SIZE,
   POLICY_PARAM_COUNT,
   POP_SIZE,
 } from "./config";
 import type { Agent, PolicyParams } from "./types";
+
+const CMA_ELITE_COUNT = 4;
 
 export type EvolutionResult = {
   best: Agent;
@@ -14,7 +17,10 @@ export type EvolutionResult = {
 export class CmaEvolutionStrategy {
   private readonly dimension = POLICY_PARAM_COUNT;
   private readonly populationSize = POP_SIZE;
-  private readonly mu = Math.max(1, Math.floor(this.populationSize / 2));
+  private readonly mu = Math.max(
+    1,
+    Math.min(ES_PARENT_COUNT, this.populationSize),
+  );
   private readonly weights = this.createWeights();
   private readonly muEff = this.computeMuEff();
   private readonly cSigma =
@@ -50,7 +56,7 @@ export class CmaEvolutionStrategy {
   private pC = new Float64Array(this.dimension);
   private pSigma = new Float64Array(this.dimension);
   private generation = 0;
-  private sigma = CMA_INITIAL_SIGMA;
+  private sigma = CMA_INITIAL_SIGMA * 0.35;
   private spareNormal: number | null = null;
 
   constructor() {
@@ -84,6 +90,7 @@ export class CmaEvolutionStrategy {
 
     const ranked = [...population].sort((a, b) => b.fitness - a.fitness);
     const best = ranked[0];
+
     const previousMean = new Float64Array(this.mean);
     const nextMean = this.recombineMean(ranked);
     const meanShift = this.computeNormalizedMeanShift(previousMean, nextMean);
@@ -121,13 +128,14 @@ export class CmaEvolutionStrategy {
     this.sigma =
       this.sigma *
       Math.exp((this.cSigma / this.dSigma) * (pSigmaNorm / this.chiN - 1));
-    this.sigma = Math.max(1e-8, this.sigma);
+    this.sigma = Math.max(0.02, Math.min(0.35, this.sigma));
+
     this.generation += 1;
     this.decomposeCovariance();
 
     return {
       best,
-      nextPolicies: this.samplePopulation(),
+      nextPolicies: this.samplePopulation(ranked),
     };
   }
 
@@ -142,7 +150,7 @@ export class CmaEvolutionStrategy {
     this.axisScales.fill(1);
     this.pC.fill(0);
     this.pSigma.fill(0);
-    this.sigma = CMA_INITIAL_SIGMA;
+    this.sigma = CMA_INITIAL_SIGMA * 0.35;
     this.generation = 0;
     this.spareNormal = null;
   }
@@ -261,10 +269,31 @@ export class CmaEvolutionStrategy {
     }
   }
 
-  private samplePopulation(): PolicyParams[] {
+  private samplePopulation(ranked: Agent[]): PolicyParams[] {
     const policies: PolicyParams[] = [];
+    const eliteCount = Math.min(CMA_ELITE_COUNT, ranked.length);
+    const parentCount = Math.min(ES_PARENT_COUNT, ranked.length);
+    const mutatedEliteCount = Math.max(0, this.populationSize - eliteCount - 32);
+    const mutationSigma = 0.12;
 
-    for (let sample = 0; sample < this.populationSize; sample++) {
+    for (let i = 0; i < eliteCount && policies.length < this.populationSize; i++) {
+      policies.push(new Float32Array(ranked[i].policy));
+    }
+
+    for (
+      let i = 0;
+      i < mutatedEliteCount && policies.length < this.populationSize;
+      i++
+    ) {
+      const parent = ranked[this.randomIndex(parentCount)];
+      const child = new Float32Array(parent.policy);
+      for (let gene = 0; gene < this.dimension; gene++) {
+        child[gene] += this.randomNormal() * mutationSigma;
+      }
+      policies.push(child);
+    }
+
+    for (let sample = policies.length; sample < this.populationSize; sample++) {
       const z = new Float64Array(this.dimension);
       for (let gene = 0; gene < this.dimension; gene++) {
         z[gene] = this.randomNormal();
@@ -443,6 +472,10 @@ export class CmaEvolutionStrategy {
       sum += vector[i] * vector[i];
     }
     return Math.sqrt(sum);
+  }
+
+  private randomIndex(maxExclusive: number): number {
+    return Math.floor(Math.random() * maxExclusive);
   }
 
   private randomRange(min: number, max: number): number {

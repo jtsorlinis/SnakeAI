@@ -1,7 +1,11 @@
+import { A2CTrainer } from "./A2CTrainer";
 import { CMAESTrainer } from "./CMAESTrainer";
 import { ESTrainer } from "./ESTrainer";
 import { GATrainer } from "./GATrainer";
+import { OpenAIESTrainer } from "./OpenAIESTrainer";
 import { PPOTrainer } from "./PPOTrainer";
+import { PSOTrainer } from "./PSOTrainer";
+import { REINFORCETrainer } from "./REINFORCETrainer";
 import type {
   PolicyPlaybackMode,
   TrainerAlgorithm,
@@ -58,9 +62,17 @@ export class SnakeTrainer {
         ? new GATrainer()
         : algorithm === "es"
           ? new ESTrainer()
+          : algorithm === "pso"
+            ? new PSOTrainer()
           : algorithm === "cmaes"
             ? new CMAESTrainer()
-            : new PPOTrainer();
+            : algorithm === "openai-es"
+              ? new OpenAIESTrainer()
+            : algorithm === "a2c"
+              ? new A2CTrainer()
+            : algorithm === "reinforce"
+              ? new REINFORCETrainer()
+              : new PPOTrainer();
 
     if (trainer.supportsPlaybackMode()) {
       trainer.setPlaybackMode(this.playbackMode);
