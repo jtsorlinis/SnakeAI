@@ -1,4 +1,8 @@
-import { GRID_SIZE, ROLLOUT_BATCH_SIZE } from "./config";
+import {
+  GRID_SIZE,
+  PPO_ROLLOUT_HORIZON,
+  ROLLOUT_BATCH_SIZE,
+} from "./config";
 import { NeuralNetwork } from "./NeuralNetwork";
 import { PPOOptimizer } from "./PPOOptimizer";
 import { SnakeEnvironment } from "./SnakeEnvironment";
@@ -9,7 +13,7 @@ import type {
   TrainerController,
   TrainerState,
 } from "./types";
-import type { PPOTransition } from "./PPOOptimizer";
+import type { PPORollout, PPOTransition } from "./PPOOptimizer";
 
 export class PPOTrainer implements TrainerController {
   private readonly ppo = new PPOOptimizer();
@@ -18,11 +22,14 @@ export class PPOTrainer implements TrainerController {
 
   private rolloutAgents: Agent[] = [];
   private trajectories: PPOTransition[][] = [];
+  private rolloutSteps = 0;
   private ppoUpdate = 1;
   private bestEverScore = 0;
   private bestEverFitness = 0;
   private bestFitnessUpdate = 1;
   private fitnessHistory: number[] = [];
+  private completedEpisodeBestScore = 0;
+  private completedEpisodeBestFitness = Number.NEGATIVE_INFINITY;
 
   private displayPolicy: PolicyParams | null = null;
   private displayAgent: Agent | null = null;
@@ -37,11 +44,13 @@ export class PPOTrainer implements TrainerController {
     this.ppo.reset();
     this.rolloutAgents = [];
     this.trajectories = [];
+    this.rolloutSteps = 0;
     this.ppoUpdate = 1;
     this.bestEverScore = 0;
     this.bestEverFitness = 0;
     this.bestFitnessUpdate = 1;
     this.fitnessHistory = [];
+    this.resetCompletedEpisodeStats();
     this.displayPolicy = null;
     this.displayAgent = null;
     this.invalidateRandomBoardAgents();
@@ -55,34 +64,33 @@ export class PPOTrainer implements TrainerController {
 
   public simulate(stepCount: number): void {
     for (let i = 0; i < stepCount; i++) {
-      let alive = 0;
-
       for (let index = 0; index < this.rolloutAgents.length; index++) {
         const agent = this.rolloutAgents[index];
-        if (!agent.alive) {
-          continue;
-        }
-
         const observation = this.environment.observe(agent);
         const sample = this.ppo.sampleAction(observation);
         const previousScore = agent.score;
         this.environment.step(agent, sample.action);
+        const done = !agent.alive;
 
         this.trajectories[index].push({
           observation,
           action: sample.action,
           reward: this.computeReward(agent, previousScore),
-          done: !agent.alive,
+          done,
           logProb: sample.logProb,
           value: sample.value,
         });
 
-        if (agent.alive) {
-          alive += 1;
+        if (done) {
+          this.recordCompletedEpisode(agent);
+          this.rolloutAgents[index] = this.environment.createAgent(
+            this.ppo.getPolicyParams(),
+          );
         }
       }
 
-      if (alive === 0) {
+      this.rolloutSteps += 1;
+      if (this.rolloutSteps >= PPO_ROLLOUT_HORIZON) {
         this.runPpoUpdate();
       }
 
@@ -172,11 +180,30 @@ export class PPOTrainer implements TrainerController {
     const policy = this.ppo.getPolicyParams();
     this.rolloutAgents = [];
     this.trajectories = [];
+    this.rolloutSteps = 0;
+    this.resetCompletedEpisodeStats();
 
     for (let i = 0; i < ROLLOUT_BATCH_SIZE; i++) {
       this.rolloutAgents.push(this.environment.createAgent(policy));
       this.trajectories.push([]);
     }
+  }
+
+  private resetCompletedEpisodeStats(): void {
+    this.completedEpisodeBestScore = 0;
+    this.completedEpisodeBestFitness = Number.NEGATIVE_INFINITY;
+  }
+
+  private recordCompletedEpisode(agent: Agent): void {
+    agent.fitness = this.fitness(agent);
+    this.completedEpisodeBestScore = Math.max(
+      this.completedEpisodeBestScore,
+      agent.score,
+    );
+    this.completedEpisodeBestFitness = Math.max(
+      this.completedEpisodeBestFitness,
+      agent.fitness,
+    );
   }
 
   private invalidateRandomBoardAgents(): void {
@@ -251,31 +278,67 @@ export class PPOTrainer implements TrainerController {
   }
 
   private runPpoUpdate(): void {
-    let best = this.rolloutAgents[0];
+    let bestScore = this.completedEpisodeBestScore;
+    let bestFitness = this.completedEpisodeBestFitness;
+
     for (const agent of this.rolloutAgents) {
       agent.fitness = this.fitness(agent);
-      if (agent.fitness > best.fitness) {
-        best = agent;
-      }
+      bestScore = Math.max(bestScore, agent.score);
+      bestFitness = Math.max(bestFitness, agent.fitness);
     }
 
-    this.bestEverScore = Math.max(this.bestEverScore, best.score);
-    if (this.ppoUpdate === 1 || best.fitness > this.bestEverFitness) {
-      this.bestEverFitness = best.fitness;
+    this.bestEverScore = Math.max(this.bestEverScore, bestScore);
+    if (this.ppoUpdate === 1 || bestFitness > this.bestEverFitness) {
+      this.bestEverFitness = bestFitness;
       this.bestFitnessUpdate = this.ppoUpdate;
       this.setDisplayPolicy(this.ppo.getPolicyParams());
     }
 
-    this.fitnessHistory.push(best.fitness);
+    this.fitnessHistory.push(bestFitness);
     if (this.fitnessHistory.length > 500) {
       this.fitnessHistory.shift();
     }
 
-    this.ppo.train(this.trajectories);
+    this.ppo.train(this.buildRollouts());
 
-    this.initializeRolloutBatch();
+    this.syncRolloutAgentPolicies();
+    this.clearTrajectories();
+    this.rolloutSteps = 0;
+    this.resetCompletedEpisodeStats();
     this.ppoUpdate += 1;
     this.invalidateRandomBoardAgents();
+  }
+
+  private buildRollouts(): PPORollout[] {
+    const rollouts: PPORollout[] = [];
+
+    for (let index = 0; index < this.trajectories.length; index++) {
+      const transitions = this.trajectories[index];
+      const lastTransition = transitions[transitions.length - 1];
+      let bootstrapValue = 0;
+
+      if (lastTransition && !lastTransition.done) {
+        const observation = this.environment.observe(this.rolloutAgents[index]);
+        bootstrapValue = this.ppo.estimateValue(observation);
+      }
+
+      rollouts.push({ transitions, bootstrapValue });
+    }
+
+    return rollouts;
+  }
+
+  private syncRolloutAgentPolicies(): void {
+    const policy = this.ppo.getPolicyParams();
+    for (const agent of this.rolloutAgents) {
+      agent.policy = new Float32Array(policy);
+    }
+  }
+
+  private clearTrajectories(): void {
+    for (const trajectory of this.trajectories) {
+      trajectory.length = 0;
+    }
   }
 
   private computeReward(agent: Agent, previousScore: number): number {

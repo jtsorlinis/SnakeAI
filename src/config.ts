@@ -45,6 +45,7 @@ export const REINFORCE_ENTROPY_COEFFICIENT = 0.005;
 export const REINFORCE_MAX_GRAD_NORM = 1;
 export const PPO_GAMMA = 1;
 export const PPO_GAE_LAMBDA = 0.95;
+export const PPO_ROLLOUT_HORIZON = 128;
 export const PPO_CLIP_EPSILON = 0.2;
 export const PPO_EPOCHS = 4;
 export const PPO_MINIBATCH_SIZE = 256;

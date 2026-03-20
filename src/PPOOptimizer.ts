@@ -45,6 +45,11 @@ export type PPOTransition = {
   value: number;
 };
 
+export type PPORollout = {
+  transitions: PPOTransition[];
+  bootstrapValue: number;
+};
+
 export type ActionSample = {
   action: number;
   logProb: number;
@@ -206,8 +211,12 @@ export class PPOOptimizer {
     return { action, logProb, value };
   }
 
-  public train(episodes: readonly PPOTransition[][]): PPOUpdateStats {
-    const batch = this.buildBatch(episodes);
+  public estimateValue(observation: Float32Array): number {
+    return this.forwardValue(observation, this.valueHidden);
+  }
+
+  public train(rollouts: readonly PPORollout[]): PPOUpdateStats {
+    const batch = this.buildBatch(rollouts);
     if (batch.size === 0) {
       return {
         batchSize: 0,
@@ -652,10 +661,10 @@ export class PPOOptimizer {
     }
   }
 
-  private buildBatch(episodes: readonly PPOTransition[][]): BatchData {
+  private buildBatch(rollouts: readonly PPORollout[]): BatchData {
     let totalTransitions = 0;
-    for (const episode of episodes) {
-      totalTransitions += episode.length;
+    for (const rollout of rollouts) {
+      totalTransitions += rollout.transitions.length;
     }
 
     const observations: Float32Array[] = new Array(totalTransitions);
@@ -665,17 +674,18 @@ export class PPOOptimizer {
     const returns = new Float32Array(totalTransitions);
 
     let cursor = 0;
-    for (const episode of episodes) {
-      if (episode.length === 0) {
+    for (const rollout of rollouts) {
+      const { transitions, bootstrapValue } = rollout;
+      if (transitions.length === 0) {
         continue;
       }
 
-      const episodeAdvantages = new Float32Array(episode.length);
+      const rolloutAdvantages = new Float32Array(transitions.length);
       let nextAdvantage = 0;
-      let nextValue = 0;
+      let nextValue = bootstrapValue;
 
-      for (let t = episode.length - 1; t >= 0; t--) {
-        const transition = episode[t];
+      for (let t = transitions.length - 1; t >= 0; t--) {
+        const transition = transitions[t];
         const nonTerminal = transition.done ? 0 : 1;
         const delta =
           transition.reward + PPO_GAMMA * nextValue * nonTerminal - transition.value;
@@ -683,14 +693,14 @@ export class PPOOptimizer {
           delta +
           PPO_GAMMA * PPO_GAE_LAMBDA * nonTerminal * nextAdvantage;
 
-        episodeAdvantages[t] = advantage;
+        rolloutAdvantages[t] = advantage;
         nextAdvantage = advantage;
         nextValue = transition.value;
       }
 
-      for (let t = 0; t < episode.length; t++) {
-        const transition = episode[t];
-        const advantage = episodeAdvantages[t];
+      for (let t = 0; t < transitions.length; t++) {
+        const transition = transitions[t];
+        const advantage = rolloutAdvantages[t];
 
         observations[cursor] = transition.observation;
         actions[cursor] = transition.action;
