@@ -8,7 +8,6 @@ const BLACK_BOX_ALGORITHMS: TrainerAlgorithm[] = [
   "ga",
   "es",
   "cmaes",
-  "pso",
   "openai-es",
 ];
 

@@ -4,7 +4,6 @@ import { ESTrainer } from "./ESTrainer";
 import { GATrainer } from "./GATrainer";
 import { OpenAIESTrainer } from "./OpenAIESTrainer";
 import { PPOTrainer } from "./PPOTrainer";
-import { PSOTrainer } from "./PSOTrainer";
 import { REINFORCETrainer } from "./REINFORCETrainer";
 import type {
   PolicyPlaybackMode,
@@ -62,8 +61,6 @@ export class SnakeTrainer {
         ? new GATrainer()
         : algorithm === "es"
           ? new ESTrainer()
-          : algorithm === "pso"
-            ? new PSOTrainer()
           : algorithm === "cmaes"
             ? new CMAESTrainer()
             : algorithm === "openai-es"

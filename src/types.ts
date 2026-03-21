@@ -6,7 +6,6 @@ export type TrainerAlgorithm =
   | "ppo"
   | "reinforce"
   | "openai-es"
-  | "pso"
   | "ga"
   | "es"
   | "cmaes";
