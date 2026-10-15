@@ -1,9 +1,6 @@
 import {
   POLICY_PARAM_COUNT,
   HIDDEN_LAYER_UNITS,
-  HH_COUNT,
-  H_BIAS_COUNT,
-  IH_COUNT,
   INPUTS,
   OFFSET_HO,
   OFFSET_HH,
@@ -23,18 +20,10 @@ import {
   PPO_VALUE_LEARNING_RATE,
 } from "./config";
 import type { PolicyParams } from "./types";
+import { ValueNetwork } from "./ValueNetwork";
 
 const EPSILON = 1e-8;
 const HIDDEN_LAYER_COUNT = HIDDEN_LAYER_UNITS.length;
-
-const VALUE_OUTPUT_INPUTS =
-  HIDDEN_LAYER_COUNT > 0 ? HIDDEN_LAYER_UNITS[HIDDEN_LAYER_COUNT - 1] : INPUTS;
-const VALUE_OFFSET_IH = 0;
-const VALUE_OFFSET_HH = VALUE_OFFSET_IH + IH_COUNT;
-const VALUE_OFFSET_H_BIAS = VALUE_OFFSET_HH + HH_COUNT;
-const VALUE_OFFSET_HO = VALUE_OFFSET_H_BIAS + H_BIAS_COUNT;
-const VALUE_OFFSET_O_BIAS = VALUE_OFFSET_HO + VALUE_OUTPUT_INPUTS;
-const VALUE_PARAM_COUNT = VALUE_OFFSET_O_BIAS + 1;
 
 export type PPOTransition = {
   observation: Float32Array;
@@ -157,31 +146,22 @@ type BatchData = {
 
 export class PPOOptimizer {
   private readonly policyParams = new Float32Array(POLICY_PARAM_COUNT);
-  private readonly valueParams = new Float32Array(VALUE_PARAM_COUNT);
+  private readonly critic = new ValueNetwork();
   private readonly policyOptimizer = new AdamOptimizer(POLICY_PARAM_COUNT);
-  private readonly valueOptimizer = new AdamOptimizer(VALUE_PARAM_COUNT);
+  private readonly valueOptimizer = new AdamOptimizer(this.critic.paramCount);
 
   private readonly policyHiddenWeightOffsets = buildHiddenWeightOffsets(
     OFFSET_IH,
     OFFSET_HH,
   );
   private readonly policyHiddenBiasOffsets = buildHiddenBiasOffsets(OFFSET_H_BIAS);
-  private readonly valueHiddenWeightOffsets = buildHiddenWeightOffsets(
-    VALUE_OFFSET_IH,
-    VALUE_OFFSET_HH,
-  );
-  private readonly valueHiddenBiasOffsets = buildHiddenBiasOffsets(
-    VALUE_OFFSET_H_BIAS,
-  );
 
   private readonly policyHidden = createHiddenBuffers();
-  private readonly valueHidden = createHiddenBuffers();
   private readonly policyHiddenGrad = createHiddenBuffers();
-  private readonly valueHiddenGrad = createHiddenBuffers();
   private readonly logits = new Float32Array(OUTPUTS);
   private readonly probabilities = new Float32Array(OUTPUTS);
   private readonly policyGradient = new Float32Array(POLICY_PARAM_COUNT);
-  private readonly valueGradient = new Float32Array(VALUE_PARAM_COUNT);
+  private readonly valueGradient = new Float32Array(this.critic.paramCount);
   private readonly logitsGradient = new Float32Array(OUTPUTS);
   private readonly entropyGradientBuffer = new Float32Array(OUTPUTS);
 
@@ -191,7 +171,7 @@ export class PPOOptimizer {
 
   public reset(): void {
     this.randomize(this.policyParams);
-    this.randomize(this.valueParams);
+    this.critic.randomize();
     this.policyOptimizer.reset();
     this.valueOptimizer.reset();
   }
@@ -206,13 +186,13 @@ export class PPOOptimizer {
 
     const action = this.sampleFromProbabilities(this.probabilities);
     const logProb = Math.log(Math.max(this.probabilities[action], EPSILON));
-    const value = this.forwardValue(observation, this.valueHidden);
+    const value = this.critic.forward(observation);
 
     return { action, logProb, value };
   }
 
   public estimateValue(observation: Float32Array): number {
-    return this.forwardValue(observation, this.valueHidden);
+    return this.critic.forward(observation);
   }
 
   public train(rollouts: readonly PPORollout[]): PPOUpdateStats {
@@ -312,15 +292,14 @@ export class PPOOptimizer {
             this.policyGradient,
           );
 
-          const value = this.forwardValue(observation, this.valueHidden);
+          const value = this.critic.forward(observation);
           const valueError = value - returnTarget;
           miniValueLoss += 0.5 * valueError * valueError;
 
           const dLossDValue =
             (PPO_VALUE_COEFFICIENT * valueError) / miniBatchSize;
-          this.backwardValue(
+          this.critic.backward(
             observation,
-            this.valueHidden,
             dLossDValue,
             this.valueGradient,
           );
@@ -335,7 +314,7 @@ export class PPOOptimizer {
           PPO_POLICY_LEARNING_RATE,
         );
         this.valueOptimizer.step(
-          this.valueParams,
+          this.critic.params,
           this.valueGradient,
           PPO_VALUE_LEARNING_RATE,
         );
@@ -481,46 +460,6 @@ export class PPOOptimizer {
     }
   }
 
-  private forwardValue(
-    observation: Float32Array,
-    hiddenTarget: Float32Array[],
-  ): number {
-    if (HIDDEN_LAYER_COUNT > 0) {
-      for (let layer = 0; layer < HIDDEN_LAYER_COUNT; layer++) {
-        const current = hiddenTarget[layer];
-        const currentSize = HIDDEN_LAYER_UNITS[layer];
-        const prev = layer === 0 ? observation : hiddenTarget[layer - 1];
-        const prevSize = layer === 0 ? INPUTS : HIDDEN_LAYER_UNITS[layer - 1];
-        const weightsOffset = this.valueHiddenWeightOffsets[layer];
-        const biasOffset = this.valueHiddenBiasOffsets[layer];
-
-        for (let h = 0; h < currentSize; h++) {
-          let sum = this.valueParams[biasOffset + h];
-          const wOffset = weightsOffset + h * prevSize;
-          for (let p = 0; p < prevSize; p++) {
-            sum += this.valueParams[wOffset + p] * prev[p];
-          }
-          current[h] = Math.tanh(sum);
-        }
-      }
-    }
-
-    const outputInput =
-      HIDDEN_LAYER_COUNT > 0
-        ? hiddenTarget[HIDDEN_LAYER_COUNT - 1]
-        : observation;
-    const outputInputSize =
-      HIDDEN_LAYER_COUNT > 0
-        ? HIDDEN_LAYER_UNITS[HIDDEN_LAYER_COUNT - 1]
-        : INPUTS;
-
-    let value = this.valueParams[VALUE_OFFSET_O_BIAS];
-    for (let i = 0; i < outputInputSize; i++) {
-      value += this.valueParams[VALUE_OFFSET_HO + i] * outputInput[i];
-    }
-    return value;
-  }
-
   private backwardPolicy(
     observation: Float32Array,
     hidden: Float32Array[],
@@ -578,61 +517,6 @@ export class PPOOptimizer {
           if (layer > 0) {
             this.policyHiddenGrad[layer - 1][p] +=
               this.policyParams[wOffset + p] * delta;
-          }
-        }
-      }
-    }
-  }
-
-  private backwardValue(
-    observation: Float32Array,
-    hidden: Float32Array[],
-    outputGradient: number,
-    gradientTarget: Float32Array,
-  ): void {
-    if (HIDDEN_LAYER_COUNT === 0) {
-      gradientTarget[VALUE_OFFSET_O_BIAS] += outputGradient;
-      for (let i = 0; i < INPUTS; i++) {
-        gradientTarget[VALUE_OFFSET_HO + i] += outputGradient * observation[i];
-      }
-      return;
-    }
-
-    for (let layer = 0; layer < this.valueHiddenGrad.length; layer++) {
-      this.valueHiddenGrad[layer].fill(0);
-    }
-
-    const lastLayer = HIDDEN_LAYER_COUNT - 1;
-    const lastSize = HIDDEN_LAYER_UNITS[lastLayer];
-    const lastHidden = hidden[lastLayer];
-    const lastGrad = this.valueHiddenGrad[lastLayer];
-
-    gradientTarget[VALUE_OFFSET_O_BIAS] += outputGradient;
-    for (let h = 0; h < lastSize; h++) {
-      gradientTarget[VALUE_OFFSET_HO + h] += outputGradient * lastHidden[h];
-      lastGrad[h] += this.valueParams[VALUE_OFFSET_HO + h] * outputGradient;
-    }
-
-    for (let layer = lastLayer; layer >= 0; layer--) {
-      const current = hidden[layer];
-      const currentSize = HIDDEN_LAYER_UNITS[layer];
-      const prev = layer === 0 ? observation : hidden[layer - 1];
-      const prevSize = layer === 0 ? INPUTS : HIDDEN_LAYER_UNITS[layer - 1];
-      const hiddenGrad = this.valueHiddenGrad[layer];
-      const weightsOffset = this.valueHiddenWeightOffsets[layer];
-      const biasOffset = this.valueHiddenBiasOffsets[layer];
-
-      for (let h = 0; h < currentSize; h++) {
-        const activation = current[h];
-        const delta = hiddenGrad[h] * (1 - activation * activation);
-        gradientTarget[biasOffset + h] += delta;
-
-        const wOffset = weightsOffset + h * prevSize;
-        for (let p = 0; p < prevSize; p++) {
-          gradientTarget[wOffset + p] += delta * prev[p];
-          if (layer > 0) {
-            this.valueHiddenGrad[layer - 1][p] +=
-              this.valueParams[wOffset + p] * delta;
           }
         }
       }

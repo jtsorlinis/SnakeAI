@@ -1,5 +1,6 @@
 import {
   BASE_HUNGER,
+  CRITIC_INPUTS,
   DIRS,
   GRID_SIZE,
   INPUTS,
@@ -48,9 +49,12 @@ export class SnakeEnvironment {
     };
   }
 
+  // Policy inputs followed by critic-only context (length, hunger).
   public observe(agent: Agent): Float32Array {
-    const observation = new Float32Array(INPUTS);
+    const observation = new Float32Array(CRITIC_INPUTS);
     this.senseInto(agent, observation);
+    observation[INPUTS] = agent.body.length / (GRID_SIZE * GRID_SIZE);
+    observation[INPUTS + 1] = agent.hunger / BASE_HUNGER;
     return observation;
   }
 

@@ -23,33 +23,19 @@ export const TOURNAMENT_SIZE = 4;
 export const MUTATION_RATE = 0.08;
 export const MUTATION_SIZE = 0.35;
 export const ES_PARENT_COUNT = 12;
-export const ES_SIGMA = 0.12;
 export const CMA_INITIAL_SIGMA = 0.55;
 export const ROLLOUT_BATCH_SIZE = 180;
-export const A2C_GAMMA = 1;
-export const A2C_GAE_LAMBDA = 0.95;
-export const A2C_EPOCHS = 1;
-export const A2C_MINIBATCH_SIZE = 256;
-export const A2C_POLICY_LEARNING_RATE = 6e-4;
-export const A2C_VALUE_LEARNING_RATE = 1e-3;
-export const A2C_VALUE_COEFFICIENT = 0.5;
-export const A2C_ENTROPY_COEFFICIENT = 0.01;
-export const A2C_MAX_GRAD_NORM = 1;
-export const REINFORCE_GAMMA = 1;
-export const REINFORCE_EPOCHS = 4;
-export const REINFORCE_MINIBATCH_SIZE = 256;
-export const REINFORCE_POLICY_LEARNING_RATE = 6e-4;
-export const REINFORCE_VALUE_LEARNING_RATE = 1e-3;
-export const REINFORCE_VALUE_COEFFICIENT = 0.5;
-export const REINFORCE_ENTROPY_COEFFICIENT = 0.005;
-export const REINFORCE_MAX_GRAD_NORM = 1;
 export const PPO_GAMMA = 1;
-export const PPO_GAE_LAMBDA = 0.95;
+// The policy only sees local sensors, so the critic cannot tell a snake that is
+// boxing itself in from one that is safe. Bootstrapping from it (lambda < 1)
+// rewards chasing food greedily; Monte Carlo advantages credit the late deaths
+// that greedy chasing causes.
+export const PPO_GAE_LAMBDA = 1;
 export const PPO_ROLLOUT_HORIZON = 128;
 export const PPO_CLIP_EPSILON = 0.2;
 export const PPO_EPOCHS = 4;
 export const PPO_MINIBATCH_SIZE = 256;
-export const PPO_POLICY_LEARNING_RATE = 6e-4;
+export const PPO_POLICY_LEARNING_RATE = 1.2e-3;
 export const PPO_VALUE_LEARNING_RATE = 1e-3;
 export const PPO_VALUE_COEFFICIENT = 0.5;
 export const PPO_ENTROPY_COEFFICIENT = 0.01;
@@ -61,6 +47,12 @@ export const TURBO_TIME_BUDGET_MS = 12;
 
 export const INPUTS = 10;
 export const OUTPUTS = 3;
+// Extra observations only the PPO critic sees: snake length and
+// remaining hunger. The return from a state depends heavily on both, but the
+// policy's local sensors cannot see them.
+export const CRITIC_CONTEXT_INPUTS = 2;
+export const CRITIC_INPUTS = INPUTS + CRITIC_CONTEXT_INPUTS;
+export const CRITIC_HIDDEN_UNITS: readonly number[] = [8];
 export const BASE_HIDDEN_UNITS = 8;
 
 export const HIDDEN_LAYERS = 1;

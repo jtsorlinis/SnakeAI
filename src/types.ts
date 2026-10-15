@@ -1,14 +1,7 @@
 export type Point = { x: number; y: number };
 
 export type PolicyParams = Float32Array;
-export type TrainerAlgorithm =
-  | "a2c"
-  | "ppo"
-  | "reinforce"
-  | "openai-es"
-  | "ga"
-  | "es"
-  | "cmaes";
+export type TrainerAlgorithm = "ga" | "cmaes" | "ppo";
 export type PolicyPlaybackMode = "greedy" | "stochastic";
 
 export type TerminalReason = "collision" | "hunger" | "solved" | null;

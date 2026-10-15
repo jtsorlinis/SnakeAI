@@ -4,12 +4,7 @@ import type { TrainerAlgorithm } from "./types";
 
 declare const process: { argv: string[] };
 
-const BLACK_BOX_ALGORITHMS: TrainerAlgorithm[] = [
-  "ga",
-  "es",
-  "cmaes",
-  "openai-es",
-];
+const BLACK_BOX_ALGORITHMS: TrainerAlgorithm[] = ["ga", "cmaes"];
 
 type BenchmarkResult = {
   algorithm: TrainerAlgorithm;
