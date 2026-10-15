@@ -610,11 +610,17 @@ export class SnakeRenderer {
   }
 
   private updateStats(state: TrainerState): void {
+    const { replay } = state;
+    const replayText =
+      replay.games > 0
+        ? `${replay.averageScore.toFixed(1)} (${replay.wins}/${replay.games} wins)`
+        : "-";
     this.stats.innerHTML = [
       `${state.iterationLabel}: <strong>${state.iteration}</strong>`,
       `Alive: ${state.alive}/${state.batchSize}`,
       `${state.batchSizeLabel}: ${state.batchSize}`,
       `Best score: ${state.bestEverScore}`,
+      `Replay avg: ${replayText}`,
       `Best fitness: ${state.bestEverFitness.toFixed(2)}`,
       `${state.staleLabel}: ${state.staleIterations}`,
     ].join("<br>");

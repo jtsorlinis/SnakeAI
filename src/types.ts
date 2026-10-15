@@ -4,6 +4,12 @@ export type PolicyParams = Float32Array;
 export type TrainerAlgorithm = "ga" | "cmaes" | "ppo";
 export type PolicyPlaybackMode = "greedy" | "stochastic";
 
+export type ReplayStats = {
+  games: number;
+  averageScore: number;
+  wins: number;
+};
+
 export type TerminalReason = "collision" | "hunger" | "solved" | null;
 
 export type Agent = {
@@ -38,6 +44,7 @@ export type TrainerState = {
   batchSizeLabel: string;
   bestEverScore: number;
   bestEverFitness: number;
+  replay: ReplayStats;
   staleIterations: number;
   staleLabel: string;
   historyLabel: string;

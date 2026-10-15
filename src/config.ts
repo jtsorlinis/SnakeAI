@@ -16,6 +16,8 @@ export const CHART_WIDTH = 300;
 export const CHART_HEIGHT = 140;
 export const MULTI_VIEW_COUNT = 25;
 export const MULTI_VIEW_COLUMNS = 5;
+// Extra snakes replaying the showcased policy for the replay average.
+export const REPLAY_AGENT_COUNT = 8;
 
 export const POP_SIZE = 180;
 export const ELITE_COUNT = 8;

@@ -5,6 +5,7 @@ import {
 } from "./config";
 import { NeuralNetwork } from "./NeuralNetwork";
 import { PPOOptimizer } from "./PPOOptimizer";
+import { ReplayEvaluator } from "./ReplayEvaluator";
 import { SnakeEnvironment } from "./SnakeEnvironment";
 import type {
   Agent,
@@ -19,6 +20,7 @@ export class PPOTrainer implements TrainerController {
   private readonly ppo = new PPOOptimizer();
   private readonly network = new NeuralNetwork();
   private readonly environment = new SnakeEnvironment(this.network);
+  private readonly replay = new ReplayEvaluator(this.environment);
 
   private rolloutAgents: Agent[] = [];
   private trajectories: PPOTransition[][] = [];
@@ -105,6 +107,8 @@ export class PPOTrainer implements TrainerController {
       if (!this.displayAgent?.alive && this.displayPolicy) {
         this.displayAgent = this.environment.createAgent(this.displayPolicy);
       }
+
+      this.replay.step();
     }
   }
 
@@ -139,6 +143,7 @@ export class PPOTrainer implements TrainerController {
       batchSizeLabel: "Rollout batch",
       bestEverScore: this.bestEverScore,
       bestEverFitness: this.bestEverFitness,
+      replay: this.replay.getStats(),
       staleIterations: Math.max(0, this.ppoUpdate - this.bestFitnessUpdate),
       staleLabel: "Updates since best",
       historyLabel: "PPO best fitness history",
@@ -157,6 +162,7 @@ export class PPOTrainer implements TrainerController {
     } else {
       this.displayAgent = null;
     }
+    this.replay.setPolicy(this.displayPolicy);
 
     this.invalidateRandomBoardAgents();
   }
@@ -174,6 +180,7 @@ export class PPOTrainer implements TrainerController {
   private setDisplayPolicy(policy: PolicyParams): void {
     this.displayPolicy = new Float32Array(policy);
     this.displayAgent = this.environment.createAgent(this.displayPolicy);
+    this.replay.setPolicy(this.displayPolicy);
   }
 
   private initializeRolloutBatch(): void {

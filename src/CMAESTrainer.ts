@@ -1,6 +1,7 @@
 import { POP_SIZE } from "./config";
 import { CmaEvolutionStrategy } from "./CmaEvolutionStrategy";
 import { NeuralNetwork } from "./NeuralNetwork";
+import { ReplayEvaluator } from "./ReplayEvaluator";
 import { SnakeEnvironment } from "./SnakeEnvironment";
 import type {
   Agent,
@@ -14,6 +15,7 @@ export class CMAESTrainer implements TrainerController {
   private readonly es = new CmaEvolutionStrategy();
   private readonly network = new NeuralNetwork();
   private readonly environment = new SnakeEnvironment(this.network);
+  private readonly replay = new ReplayEvaluator(this.environment);
 
   private population: Agent[] = [];
   private generation = 1;
@@ -77,6 +79,8 @@ export class CMAESTrainer implements TrainerController {
       if (!this.showcaseAgent?.alive && this.showcasePolicy) {
         this.showcaseAgent = this.environment.createAgent(this.showcasePolicy);
       }
+
+      this.replay.step();
     }
   }
 
@@ -111,6 +115,7 @@ export class CMAESTrainer implements TrainerController {
       batchSizeLabel: "Population",
       bestEverScore: this.bestEverScore,
       bestEverFitness: this.bestEverFitness,
+      replay: this.replay.getStats(),
       staleIterations: Math.max(0, this.generation - this.bestFitnessGeneration),
       staleLabel: "Generations since best",
       historyLabel: "CMA-ES best fitness history",
@@ -131,6 +136,7 @@ export class CMAESTrainer implements TrainerController {
     } else {
       this.showcaseAgent = null;
     }
+    this.replay.setPolicy(this.showcasePolicy);
 
     this.invalidateRandomBoardAgents();
   }
@@ -148,6 +154,7 @@ export class CMAESTrainer implements TrainerController {
   private setShowcasePolicy(policy: PolicyParams): void {
     this.showcasePolicy = new Float32Array(policy);
     this.showcaseAgent = this.environment.createAgent(this.showcasePolicy);
+    this.replay.setPolicy(this.showcasePolicy);
   }
 
   private invalidateRandomBoardAgents(): void {
