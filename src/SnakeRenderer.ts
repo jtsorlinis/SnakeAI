@@ -1,7 +1,6 @@
 import {
-  BOARD_SIZE,
-  CHART_HEIGHT,
-  CHART_WIDTH,
+  BOARD_VIEW_SIZE,
+  GRID_SIZE,
   HIDDEN_LAYER_UNITS,
   INPUTS,
   INPUT_LABELS,
@@ -14,7 +13,6 @@ import {
   OFFSET_O_BIAS,
   OUTPUTS,
   OUTPUT_LABELS,
-  TILE_SIZE,
   MULTI_VIEW_COLUMNS,
 } from "./config";
 import type { Agent, Point, TrainerState } from "./types";
@@ -23,7 +21,8 @@ type RendererElements = {
   netCanvas: HTMLCanvasElement;
   boardCanvas: HTMLCanvasElement;
   chartCanvas: HTMLCanvasElement;
-  statsElement: HTMLElement;
+  // Holds the [data-stat] text fields and [data-meter] bars.
+  statsRoot: HTMLElement;
 };
 
 type NetEdge = {
@@ -35,6 +34,47 @@ type NetEdge = {
   label: string;
 };
 
+type Rgb = readonly [number, number, number];
+
+const CANVAS_BG = "#0b0e13";
+const TILE_ALT = "#0f131a";
+const TEXT = "rgba(231, 235, 240, 0.92)";
+const TEXT_MUTED = "rgba(139, 149, 165, 0.95)";
+const TEXT_FAINT = "rgba(93, 103, 120, 0.95)";
+const GRID_LINE = "rgba(255, 255, 255, 0.05)";
+const NODE_FILL = "#151a22";
+const NODE_RING = "#2c3442";
+
+const POSITIVE: Rgb = [52, 211, 153];
+const NEGATIVE: Rgb = [251, 113, 133];
+const CHOSEN: Rgb = [251, 191, 36];
+const SNAKE_HEAD: Rgb = [110, 231, 183];
+const SNAKE_TAIL: Rgb = [4, 120, 87];
+const FOOD: Rgb = [251, 113, 133];
+
+const UI_FONT = "Inter, system-ui, sans-serif";
+const MONO_FONT = '"JetBrains Mono", ui-monospace, monospace';
+
+function rgba(color: Rgb, alpha = 1): string {
+  return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha})`;
+}
+
+function mixRgb(from: Rgb, to: Rgb, t: number): string {
+  const r = Math.round(from[0] + (to[0] - from[0]) * t);
+  const g = Math.round(from[1] + (to[1] - from[1]) * t);
+  const b = Math.round(from[2] + (to[2] - from[2]) * t);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function signed(value: number, digits: number): string {
+  return `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(digits)}`;
+}
+
+// Gap around each snake and food block, for the retro tiled look.
+function blockInset(tile: number): number {
+  return Math.max(0.5, tile * 0.08);
+}
+
 export class SnakeRenderer {
   private readonly net: HTMLCanvasElement;
   private readonly netCtx: CanvasRenderingContext2D;
@@ -42,7 +82,16 @@ export class SnakeRenderer {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly chart: HTMLCanvasElement;
   private readonly chartCtx: CanvasRenderingContext2D;
-  private readonly stats: HTMLElement;
+
+  private readonly statFields = new Map<string, HTMLElement[]>();
+  private readonly aliveMeter: HTMLElement | null;
+
+  // CSS box sizes reported by the ResizeObserver; applied at the start of the
+  // next render so a resize never leaves a cleared canvas on screen.
+  private readonly cssSizes = new Map<
+    HTMLCanvasElement,
+    { width: number; height: number }
+  >();
 
   private showMiniBoardsInLeft = false;
   private netMouse: Point | null = null;
@@ -51,26 +100,43 @@ export class SnakeRenderer {
     this.net = elements.netCanvas;
     this.board = elements.boardCanvas;
     this.chart = elements.chartCanvas;
-    this.stats = elements.statsElement;
 
     this.netCtx = this.net.getContext("2d") as CanvasRenderingContext2D;
     this.ctx = this.board.getContext("2d") as CanvasRenderingContext2D;
     this.chartCtx = this.chart.getContext("2d") as CanvasRenderingContext2D;
 
-    this.net.width = NET_WIDTH;
-    this.net.height = NET_HEIGHT;
-    this.board.width = BOARD_SIZE;
-    this.board.height = BOARD_SIZE;
-    this.chart.width = CHART_WIDTH;
-    this.chart.height = CHART_HEIGHT;
+    elements.statsRoot
+      .querySelectorAll<HTMLElement>("[data-stat]")
+      .forEach((element) => {
+        const key = element.dataset.stat as string;
+        const fields = this.statFields.get(key) ?? [];
+        fields.push(element);
+        this.statFields.set(key, fields);
+      });
+    this.aliveMeter = elements.statsRoot.querySelector<HTMLElement>(
+      '[data-meter="alive"]',
+    );
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        this.cssSizes.set(entry.target as HTMLCanvasElement, {
+          width: entry.contentRect.width,
+          height: entry.contentRect.height,
+        });
+      }
+    });
+    for (const canvas of [this.net, this.board, this.chart]) {
+      this.cssSizes.set(canvas, {
+        width: canvas.clientWidth,
+        height: canvas.clientHeight,
+      });
+      resizeObserver.observe(canvas);
+    }
 
     this.net.addEventListener("mousemove", (event) => {
-      const rect = this.net.getBoundingClientRect();
-      const scaleX = this.net.width / rect.width;
-      const scaleY = this.net.height / rect.height;
       this.netMouse = {
-        x: (event.clientX - rect.left) * scaleX,
-        y: (event.clientY - rect.top) * scaleY,
+        x: (event.offsetX * NET_WIDTH) / this.net.clientWidth,
+        y: (event.offsetY * NET_HEIGHT) / this.net.clientHeight,
       };
     });
 
@@ -88,24 +154,52 @@ export class SnakeRenderer {
   }
 
   public render(state: TrainerState): void {
-    this.syncBoardSize();
-
+    this.beginFrame(this.netCtx, NET_WIDTH, NET_HEIGHT);
     if (this.showMiniBoardsInLeft && state.boardAgents.length > 0) {
       this.drawBoardGridInNet(state.boardAgents);
     } else {
       this.drawNetwork(state);
     }
 
+    this.beginFrame(this.ctx, BOARD_VIEW_SIZE, BOARD_VIEW_SIZE);
     this.drawSingleBoard(state.boardAgent);
-    this.drawHistory(state.fitnessHistory, state.historyLabel);
+
+    const chartSize = this.cssSizes.get(this.chart);
+    const chartWidth = Math.max(1, chartSize?.width ?? 0);
+    const chartHeight = Math.max(1, chartSize?.height ?? 0);
+    this.beginFrame(this.chartCtx, chartWidth, chartHeight);
+    this.drawHistory(state.fitnessHistory, chartWidth, chartHeight);
+
     this.updateStats(state);
   }
 
-  private syncBoardSize(): void {
-    if (this.board.width !== BOARD_SIZE || this.board.height !== BOARD_SIZE) {
-      this.board.width = BOARD_SIZE;
-      this.board.height = BOARD_SIZE;
+  // Sizes the backing store to the canvas's on-screen pixels and maps the
+  // given drawing-space size onto it.
+  private beginFrame(
+    context: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+  ): void {
+    const canvas = context.canvas;
+    const cssSize = this.cssSizes.get(canvas);
+    if (cssSize && cssSize.width > 0 && cssSize.height > 0) {
+      const ratio = window.devicePixelRatio || 1;
+      const pixelWidth = Math.round(cssSize.width * ratio);
+      const pixelHeight = Math.round(cssSize.height * ratio);
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
+      }
     }
+
+    context.setTransform(
+      canvas.width / width,
+      0,
+      0,
+      canvas.height / height,
+      0,
+      0,
+    );
   }
 
   private segmentDistanceSquared(
@@ -139,9 +233,10 @@ export class SnakeRenderer {
 
   private drawNetwork(state: TrainerState): void {
     const { policy, activations } = state.network;
+    const ctx = this.netCtx;
 
-    this.netCtx.fillStyle = "#000";
-    this.netCtx.fillRect(0, 0, NET_WIDTH, NET_HEIGHT);
+    ctx.fillStyle = CANVAS_BG;
+    ctx.fillRect(0, 0, NET_WIDTH, NET_HEIGHT);
 
     if (!policy || !activations) {
       return;
@@ -153,10 +248,10 @@ export class SnakeRenderer {
     }
 
     const hiddenLayerCount = HIDDEN_LAYER_UNITS.length;
-    const top = 24;
-    const bottom = NET_HEIGHT - 24;
-    const inputX = 84;
-    const outputX = NET_WIDTH - 84;
+    const top = 50;
+    const bottom = NET_HEIGHT - 34;
+    const inputX = 104;
+    const outputX = NET_WIDTH - 108;
 
     const inputY: number[] = [];
     const hiddenX: number[] = [];
@@ -201,7 +296,7 @@ export class SnakeRenderer {
             x2: firstHiddenX,
             y2: firstHiddenY[h],
             weight: policy[wOffset + i],
-            label: `${INPUT_LABELS[i]} -> H1:${h + 1}`,
+            label: `${INPUT_LABELS[i]} → H1:${h + 1}`,
           });
         }
       }
@@ -224,7 +319,7 @@ export class SnakeRenderer {
               x2: toX,
               y2: toY[to],
               weight: policy[wOffset + from],
-              label: `H${layer}:${from + 1} -> H${layer + 1}:${to + 1}`,
+              label: `H${layer}:${from + 1} → H${layer + 1}:${to + 1}`,
             });
           }
         }
@@ -244,7 +339,7 @@ export class SnakeRenderer {
             x2: outputX,
             y2: outputY[o],
             weight: policy[wOffset + h],
-            label: `H${hiddenLayerCount}:${h + 1} -> ${OUTPUT_LABELS[o]}`,
+            label: `H${hiddenLayerCount}:${h + 1} → ${OUTPUT_LABELS[o]}`,
           });
         }
       }
@@ -258,7 +353,7 @@ export class SnakeRenderer {
             x2: outputX,
             y2: outputY[o],
             weight: policy[wOffset + i],
-            label: `${INPUT_LABELS[i]} -> ${OUTPUT_LABELS[o]}`,
+            label: `${INPUT_LABELS[i]} → ${OUTPUT_LABELS[o]}`,
           });
         }
       }
@@ -291,61 +386,58 @@ export class SnakeRenderer {
 
     this.net.style.cursor = hoveredEdge ? "pointer" : "default";
 
+    // Strong weights last so they sit on top; everything fades while hovering.
+    edges.sort((a, b) => Math.abs(a.weight) - Math.abs(b.weight));
+    const edgeAlpha = hoveredEdge ? 0.35 : 1;
+    ctx.lineCap = "round";
     for (const edge of edges) {
       const strength = Math.min(1, Math.abs(edge.weight) / maxAbs);
-      this.netCtx.strokeStyle =
-        edge.weight >= 0
-          ? `rgba(76, 175, 80, ${0.15 + strength * 0.7})`
-          : `rgba(244, 67, 54, ${0.15 + strength * 0.7})`;
-      this.netCtx.lineWidth = 0.5 + strength * 2;
-      this.netCtx.beginPath();
-      this.netCtx.moveTo(edge.x1, edge.y1);
-      this.netCtx.lineTo(edge.x2, edge.y2);
-      this.netCtx.stroke();
+      ctx.strokeStyle = rgba(
+        edge.weight >= 0 ? POSITIVE : NEGATIVE,
+        (0.06 + strength * 0.62) * edgeAlpha,
+      );
+      ctx.lineWidth = 0.6 + strength * 2.2;
+      ctx.beginPath();
+      ctx.moveTo(edge.x1, edge.y1);
+      ctx.lineTo(edge.x2, edge.y2);
+      ctx.stroke();
     }
 
     if (hoveredEdge) {
-      this.netCtx.strokeStyle = "rgba(255, 255, 255, 0.95)";
-      this.netCtx.lineWidth = 3;
-      this.netCtx.beginPath();
-      this.netCtx.moveTo(hoveredEdge.x1, hoveredEdge.y1);
-      this.netCtx.lineTo(hoveredEdge.x2, hoveredEdge.y2);
-      this.netCtx.stroke();
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(hoveredEdge.x1, hoveredEdge.y1);
+      ctx.lineTo(hoveredEdge.x2, hoveredEdge.y2);
+      ctx.stroke();
     }
 
-    this.netCtx.fillStyle = "rgba(255, 255, 255, 0.9)";
-    this.netCtx.font = "12px JetBrains Mono, monospace";
-    this.netCtx.fillText("Input", inputX - 28, 14);
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.fillStyle = TEXT_FAINT;
+    ctx.font = `600 10px ${UI_FONT}`;
+    ctx.fillText("INPUT", inputX, 20);
     for (let layer = 0; layer < hiddenLayerCount; layer++) {
-      this.netCtx.fillText(`H${layer + 1}`, hiddenX[layer] - 10, 14);
+      ctx.fillText(
+        hiddenLayerCount > 1 ? `HIDDEN ${layer + 1}` : "HIDDEN",
+        hiddenX[layer],
+        20,
+      );
     }
     if (hiddenLayerCount === 0) {
-      this.netCtx.fillText("Direct", NET_WIDTH / 2 - 20, 14);
+      ctx.fillText("DIRECT", NET_WIDTH / 2, 20);
     }
-    this.netCtx.fillText("Output", outputX - 24, 14);
+    ctx.fillText("OUTPUT", outputX, 20);
 
+    ctx.textAlign = "right";
+    ctx.font = `500 11px ${UI_FONT}`;
     for (let i = 0; i < INPUTS; i++) {
       const value = activations.input[i];
       const intensity = Math.min(1, Math.abs(value));
+      this.drawNode(inputX, inputY[i], 5.5, value, intensity);
 
-      if (intensity > 0.02) {
-        this.netCtx.fillStyle =
-          value >= 0
-            ? `rgba(41, 182, 246, ${0.1 + intensity * 0.55})`
-            : `rgba(255, 183, 77, ${0.1 + intensity * 0.55})`;
-        this.netCtx.beginPath();
-        this.netCtx.arc(inputX, inputY[i], 7 + intensity * 4, 0, Math.PI * 2);
-        this.netCtx.fill();
-      }
-
-      this.netCtx.fillStyle = value >= 0 ? "#29b6f6" : "#ffb74d";
-      this.netCtx.beginPath();
-      this.netCtx.arc(inputX, inputY[i], 5, 0, Math.PI * 2);
-      this.netCtx.fill();
-
-      this.netCtx.fillStyle = "rgba(255, 255, 255, 0.88)";
-      this.netCtx.font = "10px JetBrains Mono, monospace";
-      this.netCtx.fillText(INPUT_LABELS[i], 6, inputY[i] + 3);
+      ctx.fillStyle = intensity > 0.02 ? TEXT : TEXT_MUTED;
+      ctx.fillText(INPUT_LABELS[i], inputX - 14, inputY[i]);
     }
 
     for (let layer = 0; layer < hiddenLayerCount; layer++) {
@@ -353,107 +445,121 @@ export class SnakeRenderer {
       const layerY = hiddenY[layer];
       for (let h = 0; h < layerY.length; h++) {
         const value = layerActivation[h];
-        const intensity = Math.min(1, Math.abs(value));
-
-        if (intensity > 0.02) {
-          this.netCtx.fillStyle =
-            value >= 0
-              ? `rgba(76, 175, 80, ${0.1 + intensity * 0.6})`
-              : `rgba(244, 67, 54, ${0.1 + intensity * 0.6})`;
-          this.netCtx.beginPath();
-          this.netCtx.arc(
-            hiddenX[layer],
-            layerY[h],
-            7 + intensity * 4,
-            0,
-            Math.PI * 2,
-          );
-          this.netCtx.fill();
-        }
-
-        this.netCtx.fillStyle = value >= 0 ? "#26a69a" : "#ef5350";
-        this.netCtx.beginPath();
-        this.netCtx.arc(hiddenX[layer], layerY[h], 5, 0, Math.PI * 2);
-        this.netCtx.fill();
+        this.drawNode(
+          hiddenX[layer],
+          layerY[h],
+          5.5,
+          value,
+          Math.min(1, Math.abs(value)),
+        );
       }
     }
 
+    ctx.textAlign = "left";
     for (let o = 0; o < OUTPUTS; o++) {
       const value = activations.output[o];
       const intensity = Math.min(1, Math.abs(value) / outputAbsMax);
+      const chosen = o === activations.best;
+      this.drawNode(outputX, outputY[o], 7, value, intensity);
 
-      if (intensity > 0.02) {
-        this.netCtx.fillStyle =
-          value >= 0
-            ? `rgba(76, 175, 80, ${0.12 + intensity * 0.6})`
-            : `rgba(244, 67, 54, ${0.12 + intensity * 0.6})`;
-        this.netCtx.beginPath();
-        this.netCtx.arc(outputX, outputY[o], 8 + intensity * 5, 0, Math.PI * 2);
-        this.netCtx.fill();
+      if (chosen) {
+        ctx.strokeStyle = rgba(CHOSEN, 0.95);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(outputX, outputY[o], 11.5, 0, Math.PI * 2);
+        ctx.stroke();
       }
 
-      this.netCtx.fillStyle = o === activations.best ? "#ffd54f" : "#ffb74d";
-      this.netCtx.beginPath();
-      this.netCtx.arc(outputX, outputY[o], 6, 0, Math.PI * 2);
-      this.netCtx.fill();
-
-      if (o === activations.best) {
-        this.netCtx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-        this.netCtx.lineWidth = 1.5;
-        this.netCtx.beginPath();
-        this.netCtx.arc(outputX, outputY[o], 9, 0, Math.PI * 2);
-        this.netCtx.stroke();
-      }
-
-      this.netCtx.fillStyle = "rgba(255, 255, 255, 0.9)";
-      this.netCtx.font = "11px JetBrains Mono, monospace";
-      this.netCtx.fillText(OUTPUT_LABELS[o], outputX + 12, outputY[o] + 3);
-      this.netCtx.fillStyle = "rgba(255, 255, 255, 0.65)";
-      this.netCtx.font = "9px JetBrains Mono, monospace";
-      this.netCtx.fillText(
-        `b=${policy[OFFSET_O_BIAS + o].toFixed(2)}`,
-        outputX + 12,
-        outputY[o] + 14,
-      );
-      this.netCtx.fillText(
-        `a=${value.toFixed(2)}`,
-        outputX + 12,
-        outputY[o] + 24,
+      ctx.fillStyle = chosen ? rgba(CHOSEN) : TEXT;
+      ctx.font = `${chosen ? 600 : 500} 12px ${UI_FONT}`;
+      ctx.fillText(OUTPUT_LABELS[o], outputX + 18, outputY[o] - 6);
+      ctx.fillStyle = TEXT_FAINT;
+      ctx.font = `10px ${MONO_FONT}`;
+      ctx.fillText(
+        `a${signed(value, 2)} b${signed(policy[OFFSET_O_BIAS + o], 2)}`,
+        outputX + 18,
+        outputY[o] + 9,
       );
     }
 
     if (hoveredEdge && this.netMouse) {
-      const line1 = hoveredEdge.label;
-      const line2 = `w = ${hoveredEdge.weight.toFixed(4)}`;
-      this.netCtx.font = "10px JetBrains Mono, monospace";
-      const width = Math.max(
-        this.netCtx.measureText(line1).width,
-        this.netCtx.measureText(line2).width,
-      );
-      const boxWidth = width + 12;
-      const boxHeight = 34;
-      const x = Math.min(NET_WIDTH - boxWidth - 4, this.netMouse.x + 10);
-      const y = Math.max(4, this.netMouse.y - boxHeight - 8);
-
-      this.netCtx.fillStyle = "rgba(12, 12, 12, 0.95)";
-      this.netCtx.fillRect(x, y, boxWidth, boxHeight);
-      this.netCtx.strokeStyle = "rgba(255, 255, 255, 0.25)";
-      this.netCtx.lineWidth = 1;
-      this.netCtx.strokeRect(x, y, boxWidth, boxHeight);
-
-      this.netCtx.fillStyle = "rgba(255, 255, 255, 0.92)";
-      this.netCtx.fillText(line1, x + 6, y + 13);
-      this.netCtx.fillStyle = "rgba(255, 255, 255, 0.75)";
-      this.netCtx.fillText(line2, x + 6, y + 26);
+      this.drawEdgeTooltip(hoveredEdge, this.netMouse);
     }
   }
 
+  private drawNode(
+    x: number,
+    y: number,
+    radius: number,
+    value: number,
+    intensity: number,
+  ): void {
+    const ctx = this.netCtx;
+    const color = value >= 0 ? POSITIVE : NEGATIVE;
+    const active = intensity > 0.02;
+
+    if (active) {
+      ctx.fillStyle = rgba(color, 0.06 + intensity * 0.2);
+      ctx.beginPath();
+      ctx.arc(x, y, radius + 3 + intensity * 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = NODE_FILL;
+    ctx.fill();
+    if (active) {
+      ctx.fillStyle = rgba(color, 0.2 + intensity * 0.8);
+      ctx.fill();
+    }
+    ctx.strokeStyle = active ? rgba(color, 0.9) : NODE_RING;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  private drawEdgeTooltip(edge: NetEdge, mouse: Point): void {
+    const ctx = this.netCtx;
+    const line1 = edge.label;
+    const line2 = `weight ${signed(edge.weight, 4)}`;
+
+    ctx.font = `500 11px ${UI_FONT}`;
+    const width1 = ctx.measureText(line1).width;
+    ctx.font = `11px ${MONO_FONT}`;
+    const width2 = ctx.measureText(line2).width;
+
+    const boxWidth = Math.max(width1, width2) + 20;
+    const boxHeight = 44;
+    const x = Math.max(6, Math.min(NET_WIDTH - boxWidth - 6, mouse.x + 12));
+    let y = mouse.y - boxHeight - 12;
+    if (y < 6) {
+      y = mouse.y + 16;
+    }
+
+    ctx.beginPath();
+    ctx.roundRect(x, y, boxWidth, boxHeight, 8);
+    ctx.fillStyle = "rgba(23, 28, 37, 0.97)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.font = `500 11px ${UI_FONT}`;
+    ctx.fillStyle = TEXT;
+    ctx.fillText(line1, x + 10, y + 15);
+    ctx.font = `11px ${MONO_FONT}`;
+    ctx.fillStyle = rgba(edge.weight >= 0 ? POSITIVE : NEGATIVE);
+    ctx.fillText(line2, x + 10, y + 30);
+  }
+
   private drawSingleBoard(agent: Agent): void {
-    this.drawBoardAt(this.ctx, agent, 0, 0, BOARD_SIZE);
+    this.drawBoardAt(this.ctx, agent, 0, 0, BOARD_VIEW_SIZE);
   }
 
   private drawBoardGridInNet(agents: readonly Agent[]): void {
-    this.drawBoardGrid(this.netCtx, this.net.width, this.net.height, agents);
+    this.drawBoardGrid(this.netCtx, NET_WIDTH, NET_HEIGHT, agents);
     this.net.style.cursor = "default";
   }
 
@@ -463,27 +569,24 @@ export class SnakeRenderer {
     canvasHeight: number,
     agents: readonly Agent[],
   ): void {
-    context.fillStyle = "#000";
+    context.fillStyle = CANVAS_BG;
     context.fillRect(0, 0, canvasWidth, canvasHeight);
 
     const columns = Math.max(1, MULTI_VIEW_COLUMNS);
     const rows = Math.max(1, Math.ceil(agents.length / columns));
-    const gap = Math.max(
-      2,
-      Math.floor(Math.min(canvasWidth, canvasHeight) * 0.01),
-    );
+    const padding = 12;
+    const gap = 8;
 
-    const boardSizeByWidth = (canvasWidth - gap * (columns + 1)) / columns;
-    const boardSizeByHeight = (canvasHeight - gap * (rows + 1)) / rows;
-    const cellSize = Math.max(
-      8,
-      Math.floor(Math.min(boardSizeByWidth, boardSizeByHeight)),
-    );
+    const boardSizeByWidth =
+      (canvasWidth - padding * 2 - gap * (columns - 1)) / columns;
+    const boardSizeByHeight =
+      (canvasHeight - padding * 2 - gap * (rows - 1)) / rows;
+    const cellSize = Math.max(8, Math.min(boardSizeByWidth, boardSizeByHeight));
 
     const gridWidth = cellSize * columns + gap * (columns - 1);
     const gridHeight = cellSize * rows + gap * (rows - 1);
-    const startX = Math.floor((canvasWidth - gridWidth) / 2);
-    const startY = Math.floor((canvasHeight - gridHeight) / 2);
+    const startX = (canvasWidth - gridWidth) / 2;
+    const startY = (canvasHeight - gridHeight) / 2;
 
     for (let i = 0; i < agents.length; i++) {
       const row = Math.floor(i / columns);
@@ -492,18 +595,26 @@ export class SnakeRenderer {
       const y = startY + row * (cellSize + gap);
       const agent = agents[i];
 
-      context.strokeStyle = agent.alive
-        ? "rgba(100, 108, 255, 0.45)"
-        : "rgba(244, 67, 54, 0.45)";
-      context.lineWidth = 1;
-      context.strokeRect(x - 1.5, y - 1.5, cellSize + 3, cellSize + 3);
+      context.save();
+      context.beginPath();
+      context.roundRect(x, y, cellSize, cellSize, 6);
+      context.clip();
 
       this.drawBoardAt(context, agent, x, y, cellSize);
 
       if (!agent.alive) {
-        context.fillStyle = "rgba(0, 0, 0, 0.45)";
+        context.fillStyle = "rgba(11, 14, 19, 0.65)";
         context.fillRect(x, y, cellSize, cellSize);
       }
+      context.restore();
+
+      context.beginPath();
+      context.roundRect(x + 0.5, y + 0.5, cellSize - 1, cellSize - 1, 6);
+      context.strokeStyle = agent.alive
+        ? rgba(POSITIVE, 0.3)
+        : rgba(NEGATIVE, 0.3);
+      context.lineWidth = 1;
+      context.stroke();
     }
   }
 
@@ -514,68 +625,109 @@ export class SnakeRenderer {
     y: number,
     size: number,
   ): void {
-    const scale = size / BOARD_SIZE;
+    const tile = size / GRID_SIZE;
 
     context.save();
     context.translate(x, y);
-    context.scale(scale, scale);
 
-    context.fillStyle = "#000";
-    context.fillRect(0, 0, BOARD_SIZE, BOARD_SIZE);
+    context.fillStyle = CANVAS_BG;
+    context.fillRect(0, 0, size, size);
 
-    context.strokeStyle = "rgba(255, 255, 255, 0.12)";
-    context.lineWidth = 1.1;
-
-    for (let p = 0; p <= BOARD_SIZE; p += TILE_SIZE) {
+    // Checkerboard only when tiles are big enough not to shimmer.
+    if (tile >= 8) {
+      context.fillStyle = TILE_ALT;
       context.beginPath();
-      context.moveTo(p + 0.5, 0);
-      context.lineTo(p + 0.5, BOARD_SIZE);
-      context.stroke();
-
-      context.beginPath();
-      context.moveTo(0, p + 0.5);
-      context.lineTo(BOARD_SIZE, p + 0.5);
-      context.stroke();
+      for (let row = 0; row < GRID_SIZE; row++) {
+        for (let col = 1 - (row % 2); col < GRID_SIZE; col += 2) {
+          context.rect(col * tile, row * tile, tile, tile);
+        }
+      }
+      context.fill();
     }
 
-    context.fillStyle = "#f44336";
-    context.fillRect(
-      agent.food.x * TILE_SIZE + 3,
-      agent.food.y * TILE_SIZE + 3,
-      TILE_SIZE - 6,
-      TILE_SIZE - 6,
-    );
-
-    for (let i = agent.body.length - 1; i >= 0; i--) {
-      const part = agent.body[i];
-      context.fillStyle = i === 0 ? "#4caf50" : "#43a047";
-      context.fillRect(
-        part.x * TILE_SIZE + 2,
-        part.y * TILE_SIZE + 2,
-        TILE_SIZE - 4,
-        TILE_SIZE - 4,
-      );
-    }
+    this.drawFood(context, agent.food, tile);
+    this.drawSnake(context, agent, tile);
 
     context.restore();
   }
 
-  private drawHistory(history: readonly number[], label: string): void {
-    this.chartCtx.fillStyle = "#000";
-    this.chartCtx.fillRect(0, 0, CHART_WIDTH, CHART_HEIGHT);
+  private drawFood(
+    context: CanvasRenderingContext2D,
+    food: Point,
+    tile: number,
+  ): void {
+    const inset = blockInset(tile);
 
-    this.chartCtx.strokeStyle = "rgba(255, 255, 255, 0.12)";
-    this.chartCtx.lineWidth = 1;
+    context.fillStyle = rgba(FOOD, 0.14);
+    context.fillRect(food.x * tile, food.y * tile, tile, tile);
 
-    for (let i = 1; i <= 3; i++) {
-      const y = (CHART_HEIGHT * i) / 4;
-      this.chartCtx.beginPath();
-      this.chartCtx.moveTo(0, y + 0.5);
-      this.chartCtx.lineTo(CHART_WIDTH, y + 0.5);
-      this.chartCtx.stroke();
+    context.fillStyle = rgba(FOOD);
+    context.fillRect(
+      food.x * tile + inset,
+      food.y * tile + inset,
+      tile - inset * 2,
+      tile - inset * 2,
+    );
+  }
+
+  private drawSnake(
+    context: CanvasRenderingContext2D,
+    agent: Agent,
+    tile: number,
+  ): void {
+    const { body } = agent;
+    if (body.length === 0) {
+      return;
+    }
+
+    // Retro blocks: one square per cell with a small gap, fading from head
+    // to tail.
+    const tailIndex = Math.max(1, body.length - 1);
+    const inset = blockInset(tile);
+    const blockSize = tile - inset * 2;
+    for (let i = body.length - 1; i >= 0; i--) {
+      context.fillStyle = mixRgb(SNAKE_HEAD, SNAKE_TAIL, i / tailIndex);
+      context.fillRect(
+        body[i].x * tile + inset,
+        body[i].y * tile + inset,
+        blockSize,
+        blockSize,
+      );
+    }
+  }
+
+  private drawHistory(
+    history: readonly number[],
+    width: number,
+    height: number,
+  ): void {
+    const ctx = this.chartCtx;
+    const padX = 10;
+    const padTop = 12;
+    const padBottom = 10;
+    const plotHeight = height - padTop - padBottom;
+    const baseline = padTop + plotHeight;
+
+    ctx.fillStyle = CANVAS_BG;
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = GRID_LINE;
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 3; i++) {
+      const y = Math.round(padTop + (plotHeight * i) / 3) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(padX, y);
+      ctx.lineTo(width - padX, y);
+      ctx.stroke();
     }
 
     if (history.length < 2) {
+      ctx.fillStyle = TEXT_FAINT;
+      ctx.font = `12px ${UI_FONT}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("Collecting data…", width / 2, height / 2);
+      this.setStat("historyMax", "–");
       return;
     }
 
@@ -586,43 +738,84 @@ export class SnakeRenderer {
       }
     }
 
-    this.chartCtx.strokeStyle = "#646cff";
-    this.chartCtx.lineWidth = 2;
-    this.chartCtx.beginPath();
+    const pointX = (i: number) =>
+      padX + (i / (history.length - 1)) * (width - padX * 2);
+    const pointY = (fitness: number) =>
+      baseline - (fitness / maxFitness) * plotHeight;
 
+    const line = new Path2D();
     for (let i = 0; i < history.length; i++) {
-      const x = 10 + (i / (history.length - 1)) * (CHART_WIDTH - 20);
-      const y =
-        CHART_HEIGHT - 10 - (history[i] / maxFitness) * (CHART_HEIGHT - 20);
-
       if (i === 0) {
-        this.chartCtx.moveTo(x, y);
+        line.moveTo(pointX(i), pointY(history[i]));
       } else {
-        this.chartCtx.lineTo(x, y);
+        line.lineTo(pointX(i), pointY(history[i]));
       }
     }
 
-    this.chartCtx.stroke();
+    const area = new Path2D(line);
+    area.lineTo(pointX(history.length - 1), baseline);
+    area.lineTo(pointX(0), baseline);
+    area.closePath();
+    const fill = ctx.createLinearGradient(0, padTop, 0, baseline);
+    fill.addColorStop(0, rgba(POSITIVE, 0.24));
+    fill.addColorStop(1, rgba(POSITIVE, 0));
+    ctx.fillStyle = fill;
+    ctx.fill(area);
 
-    this.chartCtx.fillStyle = "rgba(255, 255, 255, 0.75)";
-    this.chartCtx.font = "12px IBM Plex Mono, monospace";
-    this.chartCtx.fillText(`${label} (max ${maxFitness.toFixed(2)})`, 10, 16);
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = rgba(POSITIVE);
+    ctx.lineWidth = 2;
+    ctx.stroke(line);
+
+    const lastX = pointX(history.length - 1);
+    const lastY = pointY(history[history.length - 1]);
+    ctx.fillStyle = rgba(POSITIVE, 0.25);
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = rgba(POSITIVE);
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    this.setStat("historyMax", maxFitness.toFixed(2));
   }
 
   private updateStats(state: TrainerState): void {
     const { replay } = state;
-    const replayText =
-      replay.games > 0
-        ? `${replay.averageScore.toFixed(1)} (${replay.wins}/${replay.games} wins)`
-        : "-";
-    this.stats.innerHTML = [
-      `${state.iterationLabel}: <strong>${state.iteration}</strong>`,
-      `Alive: ${state.alive}/${state.batchSize}`,
-      `${state.batchSizeLabel}: ${state.batchSize}`,
-      `Best score: ${state.bestEverScore}`,
-      `Replay avg: ${replayText}`,
-      `Best fitness: ${state.bestEverFitness.toFixed(2)}`,
-      `${state.staleLabel}: ${state.staleIterations}`,
-    ].join("<br>");
+    const hasReplay = replay.games > 0;
+
+    this.setStat("iterationLabel", state.iterationLabel);
+    this.setStat("iteration", state.iteration.toLocaleString());
+    this.setStat("bestScore", String(state.bestEverScore));
+    this.setStat("alive", String(state.alive));
+    this.setStat("batchSize", String(state.batchSize));
+    this.setStat("batchSizeLabel", state.batchSizeLabel);
+    this.setStat(
+      "replayAverage",
+      hasReplay ? replay.averageScore.toFixed(1) : "–",
+    );
+    this.setStat(
+      "replayWins",
+      hasReplay ? `${replay.wins}/${replay.games} wins` : "",
+    );
+    this.setStat("bestFitness", state.bestEverFitness.toFixed(2));
+    this.setStat("staleLabel", state.staleLabel);
+    this.setStat("stale", String(state.staleIterations));
+    this.setStat("historyLabel", state.historyLabel);
+    this.setStat("boardScore", String(state.boardAgent.score));
+
+    if (this.aliveMeter) {
+      const ratio = state.batchSize > 0 ? state.alive / state.batchSize : 0;
+      this.aliveMeter.style.transform = `scaleX(${ratio})`;
+    }
+  }
+
+  private setStat(key: string, value: string): void {
+    for (const element of this.statFields.get(key) ?? []) {
+      if (element.textContent !== value) {
+        element.textContent = value;
+      }
+    }
   }
 }

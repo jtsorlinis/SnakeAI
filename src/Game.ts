@@ -17,7 +17,7 @@ export class Game {
   private readonly renderer: SnakeRenderer;
   private readonly turboToggle: HTMLInputElement;
   private readonly leftViewToggle: HTMLInputElement;
-  private readonly algorithmSelect: HTMLSelectElement;
+  private readonly algorithmPicker: HTMLElement;
   private readonly gridDownButton: HTMLButtonElement;
   private readonly gridUpButton: HTMLButtonElement;
   private readonly resetButton: HTMLButtonElement;
@@ -32,10 +32,10 @@ export class Game {
     const netCanvas = this.getCanvas("netCanvas");
     const boardCanvas = this.getCanvas("gameCanvas");
     const chartCanvas = this.getCanvas("chartCanvas");
-    const statsElement = this.getElement("stats");
+    const statsRoot = this.getElement("app");
     this.turboToggle = this.getInput("turboToggle");
     this.leftViewToggle = this.getInput("leftViewToggle");
-    this.algorithmSelect = this.getSelect("algorithmSelect");
+    this.algorithmPicker = this.getElement("algorithmPicker");
     this.gridDownButton = this.getButton("gridDown");
     this.gridUpButton = this.getButton("gridUp");
     this.resetButton = this.getButton("resetTraining");
@@ -45,7 +45,7 @@ export class Game {
       netCanvas,
       boardCanvas,
       chartCanvas,
-      statsElement,
+      statsRoot,
     });
 
     this.turboMode = this.turboToggle.checked;
@@ -61,9 +61,9 @@ export class Game {
       this.renderer.setShowMiniBoardsInLeft(this.showMiniBoardsInLeft);
     });
 
-    this.trainer.setAlgorithm(this.algorithmSelect.value as TrainerAlgorithm);
-    this.algorithmSelect.addEventListener("change", () => {
-      this.trainer.setAlgorithm(this.algorithmSelect.value as TrainerAlgorithm);
+    this.trainer.setAlgorithm(this.getSelectedAlgorithm());
+    this.algorithmPicker.addEventListener("change", () => {
+      this.trainer.setAlgorithm(this.getSelectedAlgorithm());
       this.stepBudget = 0;
       this.lastFrameTime = 0;
     });
@@ -106,12 +106,10 @@ export class Game {
     return element;
   }
 
-  private getSelect(id: string): HTMLSelectElement {
-    const element = document.getElementById(id);
-    if (!(element instanceof HTMLSelectElement)) {
-      throw new Error(`Missing select: ${id}`);
-    }
-    return element;
+  private getSelectedAlgorithm(): TrainerAlgorithm {
+    const checked =
+      this.algorithmPicker.querySelector<HTMLInputElement>("input:checked");
+    return (checked?.value ?? "ga") as TrainerAlgorithm;
   }
 
   private getButton(id: string): HTMLButtonElement {
@@ -136,7 +134,7 @@ export class Game {
   }
 
   private refreshGridControls(): void {
-    this.gridValue.textContent = `${GRID_SIZE}x${GRID_SIZE}`;
+    this.gridValue.textContent = `${GRID_SIZE}×${GRID_SIZE}`;
     this.gridDownButton.disabled = GRID_SIZE <= MIN_GRID_SIZE;
     this.gridUpButton.disabled = GRID_SIZE >= MAX_GRID_SIZE;
   }

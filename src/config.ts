@@ -6,14 +6,12 @@ export const GRID_SIZE_STEP = 5;
 export const DEFAULT_GRID_SIZE = 10;
 
 export let GRID_SIZE = DEFAULT_GRID_SIZE;
-export const TILE_SIZE = 24;
-export let BOARD_SIZE = 0;
 export let MAX_SCORE = 0;
 
+// Drawing-space sizes; canvases are scaled to their CSS size and pixel ratio.
+export const BOARD_VIEW_SIZE = 480;
 export const NET_WIDTH = 480;
 export const NET_HEIGHT = 480;
-export const CHART_WIDTH = 300;
-export const CHART_HEIGHT = 140;
 export const MULTI_VIEW_COUNT = 25;
 export const MULTI_VIEW_COLUMNS = 5;
 // Extra snakes replaying the showcased policy for the replay average.
@@ -73,7 +71,6 @@ export let OFFSET_O_BIAS = 0;
 export let POLICY_PARAM_COUNT = 0;
 
 function recalculateGridConfig(): void {
-  BOARD_SIZE = GRID_SIZE * TILE_SIZE;
   MAX_SCORE = GRID_SIZE * GRID_SIZE - 3;
   BASE_HUNGER = GRID_SIZE * GRID_SIZE;
 }
