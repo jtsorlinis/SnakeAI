@@ -3,68 +3,184 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#090b10" />
     <title>Snake Trainer Lab</title>
-    <script type="module" crossorigin src="/SnakeAI/assets/index-CCK84Ftx.js"></script>
-    <link rel="stylesheet" crossorigin href="/SnakeAI/assets/index-MhiVT3AW.css">
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23101b17'/%3E%3Cpath d='M7 22h8a4 4 0 0 0 0-8h-2a4 4 0 0 1 0-8h8' fill='none' stroke='%2334d399' stroke-width='3.5' stroke-linecap='round'/%3E%3Ccircle cx='25' cy='6' r='2.4' fill='%23fb7185'/%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    />
+    <script type="module" crossorigin src="/SnakeAI/assets/index-C_NkUlaE.js"></script>
+    <link rel="stylesheet" crossorigin href="/SnakeAI/assets/index-DRVTGtq3.css">
   </head>
   <body>
-    <main id="app">
-      <canvas id="netCanvas" aria-label="Left visualization"></canvas>
-      <canvas id="gameCanvas" aria-label="Snake board"></canvas>
-      <section class="panel">
-        <h1>Snake Trainer Lab</h1>
-        <div id="stats" class="stats">Training...</div>
-        <div class="controls-panel">
-          <div class="control-section inline-control">
-            <label class="control-label" for="algorithmSelect">Algorithm</label>
-            <select id="algorithmSelect">
-              <optgroup label="Black-Box">
-                <option value="ga">GA</option>
-                <option value="es">ES</option>
-                <option value="cmaes">CMA-ES</option>
-                <option value="openai-es">OpenAI-ES</option>
-              </optgroup>
-              <optgroup label="Policy Gradient">
-                <option value="reinforce">REINFORCE</option>
-                <option value="a2c">A2C</option>
-                <option value="ppo">PPO</option>
-              </optgroup>
-            </select>
-          </div>
-          <div class="control-section toggle-row">
-            <input id="turboToggle" type="checkbox" />
-            <label for="turboToggle">Turbo (max speed)</label>
-          </div>
-          <div class="control-section toggle-row">
-            <input id="leftViewToggle" type="checkbox" />
-            <label for="leftViewToggle">Visualise all snakes</label>
-          </div>
-          <div class="control-section hidden-controls">
-            <span class="control-label">Grid size</span>
-            <div class="hidden-buttons">
-              <button
-                id="gridDown"
-                type="button"
-                aria-label="Decrease grid size"
-              >
-                -
-              </button>
-              <span id="gridValue">10x10</span>
-              <button id="gridUp" type="button" aria-label="Increase grid size">
-                +
-              </button>
-              <button
-                id="resetTraining"
-                type="button"
-                aria-label="Reset training"
-              >
-                Reset
-              </button>
-            </div>
-          </div>
+    <div class="shell">
+      <header class="masthead">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M7 22h8a4 4 0 0 0 0-8h-2a4 4 0 0 1 0-8h8" />
+          <circle cx="25" cy="6" r="2.4" />
+        </svg>
+        <div>
+          <h1>Snake Trainer Lab</h1>
+          <p class="tagline">Watch neural networks learn to play Snake.</p>
         </div>
-        <canvas id="chartCanvas" aria-label="Training history"></canvas>
-      </section>
-    </main>
+      </header>
+
+      <main id="app" class="layout">
+        <section class="card net-card">
+          <header class="card-header">
+            <h2 class="card-title">
+              <span class="view-network">Policy network</span>
+              <span class="view-population">All snakes</span>
+            </h2>
+            <div class="legend view-network" aria-hidden="true">
+              <span class="legend-item"><i class="swatch positive"></i>+ weight</span>
+              <span class="legend-item"><i class="swatch negative"></i>− weight</span>
+            </div>
+            <span class="card-meta view-population">Random sample of the batch</span>
+          </header>
+          <canvas
+            id="netCanvas"
+            class="square-canvas"
+            aria-label="Policy network, or a grid of sampled snakes"
+          ></canvas>
+        </section>
+
+        <section class="card board-card">
+          <header class="card-header">
+            <h2 class="card-title">Best policy</h2>
+            <span class="chip">Score <strong data-stat="boardScore">0</strong></span>
+          </header>
+          <canvas
+            id="gameCanvas"
+            class="square-canvas"
+            aria-label="Snake board"
+          ></canvas>
+        </section>
+
+        <section class="card chart-card">
+          <header class="card-header">
+            <h2 class="card-title" data-stat="historyLabel">Best fitness history</h2>
+            <span class="card-meta mono">max <span data-stat="historyMax">–</span></span>
+          </header>
+          <canvas id="chartCanvas" aria-label="Training history"></canvas>
+        </section>
+
+        <aside class="sidebar">
+          <section class="card stats-card" aria-label="Training stats">
+            <div class="stat-tiles">
+              <div class="stat-tile">
+                <span class="stat-label" data-stat="iterationLabel">Generation</span>
+                <span class="stat-value" data-stat="iteration">0</span>
+              </div>
+              <div class="stat-tile">
+                <span class="stat-label">Best score</span>
+                <span class="stat-value accent" data-stat="bestScore">0</span>
+              </div>
+            </div>
+            <div class="meter-block">
+              <div class="meter-labels">
+                <span class="stat-label">Alive</span>
+                <span class="mono">
+                  <span data-stat="alive">0</span>
+                  <span class="faint">/ <span data-stat="batchSize">0</span></span>
+                </span>
+              </div>
+              <div class="meter"><div class="meter-fill" data-meter="alive"></div></div>
+            </div>
+            <dl class="stat-list">
+              <div>
+                <dt>Replay avg</dt>
+                <dd>
+                  <span class="faint" data-stat="replayWins"></span>
+                  <span data-stat="replayAverage">–</span>
+                </dd>
+              </div>
+              <div>
+                <dt>Best fitness</dt>
+                <dd data-stat="bestFitness">0.00</dd>
+              </div>
+              <div>
+                <dt data-stat="staleLabel">Generations since best</dt>
+                <dd data-stat="stale">0</dd>
+              </div>
+              <div>
+                <dt data-stat="batchSizeLabel">Population</dt>
+                <dd data-stat="batchSize">0</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="card controls-card" aria-label="Controls">
+            <fieldset id="algorithmPicker" class="field">
+              <legend class="field-label">Algorithm</legend>
+              <div class="segmented">
+                <label class="segment">
+                  <input type="radio" name="algorithm" value="ga" checked />
+                  <span class="segment-body">
+                    <span class="segment-name">GA</span>
+                    <span class="segment-kind">Black-box</span>
+                  </span>
+                </label>
+                <label class="segment">
+                  <input type="radio" name="algorithm" value="cmaes" />
+                  <span class="segment-body">
+                    <span class="segment-name">CMA-ES</span>
+                    <span class="segment-kind">Black-box</span>
+                  </span>
+                </label>
+                <label class="segment">
+                  <input type="radio" name="algorithm" value="ppo" />
+                  <span class="segment-body">
+                    <span class="segment-name">PPO</span>
+                    <span class="segment-kind">Gradient</span>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+
+            <div class="switches">
+              <label class="switch-row">
+                <span class="switch-text">
+                  <span class="switch-title">Turbo</span>
+                  <span class="switch-desc">Simulate at max speed</span>
+                </span>
+                <input id="turboToggle" class="switch" type="checkbox" role="switch" />
+              </label>
+              <label class="switch-row">
+                <span class="switch-text">
+                  <span class="switch-title">Visualise all snakes</span>
+                  <span class="switch-desc">Swap the network for live agents</span>
+                </span>
+                <input id="leftViewToggle" class="switch" type="checkbox" role="switch" />
+              </label>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label" id="gridSizeLabel">Grid size</span>
+              <div class="stepper" role="group" aria-labelledby="gridSizeLabel">
+                <button id="gridDown" type="button" aria-label="Decrease grid size">−</button>
+                <span id="gridValue">10×10</span>
+                <button id="gridUp" type="button" aria-label="Increase grid size">+</button>
+              </div>
+            </div>
+
+            <button id="resetTraining" class="reset-button" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                <path d="M3 3v5h5" />
+              </svg>
+              Reset training
+            </button>
+          </section>
+        </aside>
+      </main>
+    </div>
   </body>
 </html>
