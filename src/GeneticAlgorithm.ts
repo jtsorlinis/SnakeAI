@@ -55,13 +55,6 @@ export class GeneticAlgorithm {
     return Math.floor(Math.random() * maxExclusive);
   }
 
-  // Score only. Clearing the board takes a slow space-filling sweep, and a
-  // step penalty made that lose to greedy food chasing that traps itself.
-  // Hunger already ends games that stall.
-  public fitness(agent: Agent): number {
-    return agent.score + (agent.terminalReason === "solved" ? 1 : 0);
-  }
-
   private crossover(a: PolicyParams, b: PolicyParams): PolicyParams {
     const child = new Float32Array(POLICY_PARAM_COUNT);
     for (let i = 0; i < POLICY_PARAM_COUNT; i++) {

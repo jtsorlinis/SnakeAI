@@ -1,9 +1,13 @@
 import {
-  GRID_SIZE,
+  PPO_RESTART_AFTER,
   PPO_ROLLOUT_HORIZON,
+  PPO_VALIDATE_EVERY,
+  RESTART_CHECK_GAMES,
   ROLLOUT_BATCH_SIZE,
+  VALIDATION_GAMES,
 } from "./config";
 import { NeuralNetwork } from "./NeuralNetwork";
+import { scoreFitness, validatePolicy } from "./PolicyValidation";
 import { PPOOptimizer } from "./PPOOptimizer";
 import { ReplayEvaluator } from "./ReplayEvaluator";
 import { SnakeEnvironment } from "./SnakeEnvironment";
@@ -29,6 +33,10 @@ export class PPOTrainer implements TrainerController {
   private bestEverScore = 0;
   private bestEverFitness = 0;
   private bestFitnessUpdate = 1;
+  // When the current networks were initialised, and whether they have passed
+  // the board-clearing check.
+  private runStartUpdate = 1;
+  private runClearsBoard = false;
   private fitnessHistory: number[] = [];
   private completedEpisodeBestScore = 0;
   private completedEpisodeBestFitness = Number.NEGATIVE_INFINITY;
@@ -51,6 +59,8 @@ export class PPOTrainer implements TrainerController {
     this.bestEverScore = 0;
     this.bestEverFitness = 0;
     this.bestFitnessUpdate = 1;
+    this.runStartUpdate = 1;
+    this.runClearsBoard = false;
     this.fitnessHistory = [];
     this.resetCompletedEpisodeStats();
     this.displayPolicy = null;
@@ -156,6 +166,8 @@ export class PPOTrainer implements TrainerController {
 
   public onGridSizeChanged(): void {
     this.initializeRolloutBatch();
+    this.runStartUpdate = this.ppoUpdate;
+    this.runClearsBoard = false;
 
     if (this.displayPolicy) {
       this.displayAgent = this.environment.createAgent(this.displayPolicy);
@@ -202,7 +214,7 @@ export class PPOTrainer implements TrainerController {
   }
 
   private recordCompletedEpisode(agent: Agent): void {
-    agent.fitness = this.fitness(agent);
+    agent.fitness = scoreFitness(agent);
     this.completedEpisodeBestScore = Math.max(
       this.completedEpisodeBestScore,
       agent.score,
@@ -289,16 +301,23 @@ export class PPOTrainer implements TrainerController {
     let bestFitness = this.completedEpisodeBestFitness;
 
     for (const agent of this.rolloutAgents) {
-      agent.fitness = this.fitness(agent);
+      agent.fitness = scoreFitness(agent);
       bestScore = Math.max(bestScore, agent.score);
       bestFitness = Math.max(bestFitness, agent.fitness);
     }
 
     this.bestEverScore = Math.max(this.bestEverScore, bestScore);
-    if (this.ppoUpdate === 1 || bestFitness > this.bestEverFitness) {
-      this.bestEverFitness = bestFitness;
-      this.bestFitnessUpdate = this.ppoUpdate;
-      this.setDisplayPolicy(this.ppo.getPolicyParams());
+    // Rollout episodes are sampled stochastically and span many updates, so
+    // the best one says little about the current policy. Score it greedily on
+    // fresh games instead; ties go to the newer policy.
+    if (this.ppoUpdate === 1 || this.ppoUpdate % PPO_VALIDATE_EVERY === 0) {
+      const policy = this.ppo.getPolicyParams();
+      const validated = validatePolicy(this.environment, policy, VALIDATION_GAMES);
+      if (validated.fitness >= this.bestEverFitness) {
+        this.bestEverFitness = validated.fitness;
+        this.bestFitnessUpdate = this.ppoUpdate;
+        this.setDisplayPolicy(policy);
+      }
     }
 
     this.fitnessHistory.push(bestFitness);
@@ -306,14 +325,40 @@ export class PPOTrainer implements TrainerController {
       this.fitnessHistory.shift();
     }
 
-    this.ppo.train(this.buildRollouts());
+    if (this.shouldRestart()) {
+      this.ppo.reset();
+      this.initializeRolloutBatch();
+      this.runStartUpdate = this.ppoUpdate;
+    } else {
+      this.ppo.train(this.buildRollouts());
 
-    this.syncRolloutAgentPolicies();
-    this.clearTrajectories();
-    this.rolloutSteps = 0;
-    this.resetCompletedEpisodeStats();
+      this.syncRolloutAgentPolicies();
+      this.clearTrajectories();
+      this.rolloutSteps = 0;
+      this.resetCompletedEpisodeStats();
+    }
     this.ppoUpdate += 1;
     this.invalidateRandomBoardAgents();
+  }
+
+  // Most runs never learn to clear the board. Networks that haven't
+  // within their budget are reinitialised, judged by one check on fresh
+  // games. The display keeps the best policy found so far.
+  private shouldRestart(): boolean {
+    if (
+      this.runClearsBoard ||
+      this.ppoUpdate - this.runStartUpdate < PPO_RESTART_AFTER
+    ) {
+      return false;
+    }
+
+    const check = validatePolicy(
+      this.environment,
+      this.ppo.getPolicyParams(),
+      RESTART_CHECK_GAMES,
+    );
+    this.runClearsBoard = check.clearRate >= 0.5;
+    return !this.runClearsBoard;
   }
 
   private buildRollouts(): PPORollout[] {
@@ -348,21 +393,14 @@ export class PPOTrainer implements TrainerController {
     }
   }
 
+  // No per-step penalty, for the same reason as scoreFitness.
   private computeReward(agent: Agent, previousScore: number): number {
     let reward = agent.score - previousScore;
-    reward -= 1 / (GRID_SIZE * GRID_SIZE);
     if (agent.terminalReason === "solved") {
       reward += 1;
     } else if (agent.terminalReason === "collision") {
       reward -= 1;
     }
     return reward;
-  }
-
-  private fitness(agent: Agent): number {
-    const foodReward = agent.score;
-    const deathPenalty = agent.terminalReason === "collision" ? 1 : 0;
-    const stepPenalty = agent.steps / (GRID_SIZE * GRID_SIZE);
-    return foodReward - deathPenalty - stepPenalty;
   }
 }

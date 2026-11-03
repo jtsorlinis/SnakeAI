@@ -1,7 +1,6 @@
 import {
   CMA_INITIAL_SIGMA,
   ES_PARENT_COUNT,
-  GRID_SIZE,
   POLICY_PARAM_COUNT,
   POP_SIZE,
 } from "./config";
@@ -83,11 +82,8 @@ export class CmaEvolutionStrategy {
     return policies;
   }
 
+  // Agents arrive with fitness already averaged over their evaluation games.
   public evolve(population: Agent[]): EvolutionResult {
-    for (const agent of population) {
-      agent.fitness = this.fitness(agent);
-    }
-
     const ranked = [...population].sort((a, b) => b.fitness - a.fitness);
     const best = ranked[0];
 
@@ -480,13 +476,6 @@ export class CmaEvolutionStrategy {
 
   private randomRange(min: number, max: number): number {
     return min + Math.random() * (max - min);
-  }
-
-  private fitness(agent: Agent): number {
-    const foodReward = agent.score;
-    const deathPenalty = agent.terminalReason === "collision" ? 1 : 0;
-    const stepPenalty = agent.steps / (GRID_SIZE * GRID_SIZE);
-    return foodReward - deathPenalty - stepPenalty;
   }
 
   private randomNormal(): number {

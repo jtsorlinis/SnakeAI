@@ -1,12 +1,13 @@
 import {
-  GA_EVAL_GAMES,
-  GA_RESTART_AFTER,
-  GA_RESTART_CHECK_GAMES,
-  GA_VALIDATION_GAMES,
+  EVAL_GAMES,
+  RESTART_AFTER,
+  RESTART_CHECK_GAMES,
+  VALIDATION_GAMES,
   POP_SIZE,
 } from "./config";
 import { GeneticAlgorithm } from "./GeneticAlgorithm";
 import { NeuralNetwork } from "./NeuralNetwork";
+import { samePolicy, scoreFitness, validatePolicy } from "./PolicyValidation";
 import { ReplayEvaluator } from "./ReplayEvaluator";
 import { SnakeEnvironment } from "./SnakeEnvironment";
 import type {
@@ -176,12 +177,6 @@ export class GATrainer implements TrainerController {
     this.replay.setPolicy(this.showcasePolicy);
   }
 
-  // Elites carry over, so the same policy can lead again; keep its game going.
-  private isShowcasing(policy: PolicyParams): boolean {
-    const current = this.showcasePolicy;
-    return current !== null && current.every((weight, i) => weight === policy[i]);
-  }
-
   private invalidateRandomBoardAgents(): void {
     this.randomBoardAgents = [];
     this.randomBoardGeneration = -1;
@@ -262,34 +257,15 @@ export class GATrainer implements TrainerController {
   private finishGame(index: number): boolean {
     const agent = this.population[index];
     this.bestEverScore = Math.max(this.bestEverScore, agent.score);
-    this.fitnessTotals[index] += this.ga.fitness(agent);
+    this.fitnessTotals[index] += scoreFitness(agent);
     this.gamesPlayed[index] += 1;
 
-    if (this.gamesPlayed[index] >= GA_EVAL_GAMES) {
+    if (this.gamesPlayed[index] >= EVAL_GAMES) {
       return false;
     }
 
     this.population[index] = this.environment.createAgent(agent.policy);
     return true;
-  }
-
-  private validate(
-    policy: PolicyParams,
-    games = GA_VALIDATION_GAMES,
-  ): { fitness: number; clearRate: number } {
-    let total = 0;
-    let clears = 0;
-    for (let i = 0; i < games; i++) {
-      const agent = this.environment.createAgent(policy);
-      while (agent.alive) {
-        this.environment.step(agent);
-      }
-      total += this.ga.fitness(agent);
-      if (agent.terminalReason === "solved") {
-        clears += 1;
-      }
-    }
-    return { fitness: total / games, clearRate: clears / games };
   }
 
   private evolve(): void {
@@ -304,11 +280,17 @@ export class GATrainer implements TrainerController {
     // newer leader: fitness caps out once games are won, and a strict
     // comparison would freeze the first lucky perfect run on display.
     if (best.fitness >= this.bestEverFitness) {
-      const validated = this.validate(best.policy);
+      const validated = validatePolicy(
+        this.environment,
+        best.policy,
+        VALIDATION_GAMES,
+      );
       if (validated.fitness >= this.bestEverFitness) {
         this.bestEverFitness = validated.fitness;
         this.bestFitnessGeneration = this.generation;
-        if (!this.isShowcasing(best.policy)) {
+        // Elites carry over, so the same policy can lead again; keep its game
+        // going.
+        if (!samePolicy(this.showcasePolicy, best.policy)) {
           this.setShowcasePolicy(best.policy);
         }
       }
@@ -326,9 +308,13 @@ export class GATrainer implements TrainerController {
     let restart = false;
     if (
       !this.runClearsBoard &&
-      this.generation - this.runStartGeneration >= GA_RESTART_AFTER
+      this.generation - this.runStartGeneration >= RESTART_AFTER
     ) {
-      const check = this.validate(best.policy, GA_RESTART_CHECK_GAMES);
+      const check = validatePolicy(
+        this.environment,
+        best.policy,
+        RESTART_CHECK_GAMES,
+      );
       this.runClearsBoard = check.clearRate >= 0.5;
       restart = !this.runClearsBoard;
       if (restart) {

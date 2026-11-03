@@ -22,18 +22,18 @@ export const ELITE_COUNT = 8;
 export const TOURNAMENT_SIZE = 4;
 export const MUTATION_RATE = 0.08;
 export const MUTATION_SIZE = 0.35;
-// Each GA policy plays this many games per generation and is ranked on the
-// mean. A single game is mostly food-placement luck.
-export const GA_EVAL_GAMES = 3;
-// Extra games a generation's leader plays before it can replace the showcased
-// policy, so one lucky evaluation can't take over the display for good.
-export const GA_VALIDATION_GAMES = 10;
+// Each GA/CMA-ES policy plays this many games per generation and is ranked on
+// the mean. A single game is mostly food-placement luck.
+export const EVAL_GAMES = 3;
+// Extra games a candidate plays before it can replace the showcased policy,
+// so one lucky evaluation can't take over the display for good.
+export const VALIDATION_GAMES = 10;
 // Some runs settle on a pattern that rarely clears the board (edge-hugging
 // around 60, or a sweep that dies near the end) and almost never escape. After
-// this many generations a population's leader is tested on fresh games, and if
-// it clears fewer than half of them the population is reseeded.
-export const GA_RESTART_AFTER = 300;
-export const GA_RESTART_CHECK_GAMES = 20;
+// this many GA/CMA-ES generations a population's leader is tested on fresh
+// games, and if it clears fewer than half of them the population is reseeded.
+export const RESTART_AFTER = 300;
+export const RESTART_CHECK_GAMES = 20;
 export const ES_PARENT_COUNT = 12;
 export const CMA_INITIAL_SIGMA = 0.55;
 export const ROLLOUT_BATCH_SIZE = 180;
@@ -52,6 +52,11 @@ export const PPO_VALUE_LEARNING_RATE = 1e-3;
 export const PPO_VALUE_COEFFICIENT = 0.5;
 export const PPO_ENTROPY_COEFFICIENT = 0.01;
 export const PPO_MAX_GRAD_NORM = 1;
+// PPO updates between greedy validations of the policy for the display.
+export const PPO_VALIDATE_EVERY = 10;
+// PPO's budget to learn to clear the board before its networks are reset.
+// Runs that get there are usually clearing over half their games by then.
+export const PPO_RESTART_AFTER = 1000;
 export let BASE_HUNGER = 0;
 
 export const NORMAL_STEPS_PER_SECOND = 15;

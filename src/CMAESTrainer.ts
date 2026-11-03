@@ -1,6 +1,13 @@
-import { POP_SIZE } from "./config";
+import {
+  EVAL_GAMES,
+  POP_SIZE,
+  RESTART_AFTER,
+  RESTART_CHECK_GAMES,
+  VALIDATION_GAMES,
+} from "./config";
 import { CmaEvolutionStrategy } from "./CmaEvolutionStrategy";
 import { NeuralNetwork } from "./NeuralNetwork";
+import { samePolicy, scoreFitness, validatePolicy } from "./PolicyValidation";
 import { ReplayEvaluator } from "./ReplayEvaluator";
 import { SnakeEnvironment } from "./SnakeEnvironment";
 import type {
@@ -18,10 +25,16 @@ export class CMAESTrainer implements TrainerController {
   private readonly replay = new ReplayEvaluator(this.environment);
 
   private population: Agent[] = [];
+  private gamesPlayed: number[] = [];
+  private fitnessTotals: number[] = [];
   private generation = 1;
   private bestEverScore = 0;
   private bestEverFitness = 0;
   private bestFitnessGeneration = 1;
+  // When the current search was started, and whether it has passed the
+  // board-clearing check.
+  private runStartGeneration = 1;
+  private runClearsBoard = false;
   private fitnessHistory: number[] = [];
 
   private showcasePolicy: PolicyParams | null = null;
@@ -39,6 +52,8 @@ export class CMAESTrainer implements TrainerController {
     this.bestEverScore = 0;
     this.bestEverFitness = 0;
     this.bestFitnessGeneration = 1;
+    this.runStartGeneration = 1;
+    this.runClearsBoard = false;
     this.fitnessHistory = [];
     this.showcasePolicy = null;
     this.showcaseAgent = null;
@@ -47,6 +62,7 @@ export class CMAESTrainer implements TrainerController {
     this.population = this.es
       .initializePopulation()
       .map((policy) => this.environment.createAgent(policy));
+    this.resetEvaluation();
 
     if (this.population.length > 0) {
       this.setShowcasePolicy(this.population[0].policy);
@@ -57,13 +73,14 @@ export class CMAESTrainer implements TrainerController {
     for (let i = 0; i < stepCount; i++) {
       let alive = 0;
 
-      for (const agent of this.population) {
+      for (let a = 0; a < this.population.length; a++) {
+        const agent = this.population[a];
         if (!agent.alive) {
           continue;
         }
 
         this.environment.step(agent);
-        if (agent.alive) {
+        if (agent.alive || this.finishGame(a)) {
           alive += 1;
         }
       }
@@ -130,6 +147,9 @@ export class CMAESTrainer implements TrainerController {
     this.population = this.population.map((agent) =>
       this.environment.createAgent(agent.policy),
     );
+    this.resetEvaluation();
+    this.runStartGeneration = this.generation;
+    this.runClearsBoard = false;
 
     if (this.showcasePolicy) {
       this.showcaseAgent = this.environment.createAgent(this.showcasePolicy);
@@ -228,14 +248,52 @@ export class CMAESTrainer implements TrainerController {
     return this.randomBoardAgents;
   }
 
+  private resetEvaluation(): void {
+    this.gamesPlayed = this.population.map(() => 0);
+    this.fitnessTotals = this.population.map(() => 0);
+  }
+
+  // Records a finished game. Returns true if the agent starts another one.
+  private finishGame(index: number): boolean {
+    const agent = this.population[index];
+    this.bestEverScore = Math.max(this.bestEverScore, agent.score);
+    this.fitnessTotals[index] += scoreFitness(agent);
+    this.gamesPlayed[index] += 1;
+
+    if (this.gamesPlayed[index] >= EVAL_GAMES) {
+      return false;
+    }
+
+    this.population[index] = this.environment.createAgent(agent.policy);
+    return true;
+  }
+
   private evolve(): void {
+    for (let a = 0; a < this.population.length; a++) {
+      this.population[a].fitness = this.fitnessTotals[a] / this.gamesPlayed[a];
+    }
+
     const { best, nextPolicies } = this.es.evolve(this.population);
 
-    this.bestEverScore = Math.max(this.bestEverScore, best.score);
-    if (this.generation === 1 || best.fitness > this.bestEverFitness) {
-      this.bestEverFitness = best.fitness;
-      this.bestFitnessGeneration = this.generation;
-      this.setShowcasePolicy(best.policy);
+    // The leader's mean is the max of many noisy estimates, so it only takes
+    // over the display if it also does well on fresh games. Ties go to the
+    // newer leader: fitness caps out once games are won, and a strict
+    // comparison would freeze the first lucky perfect run on display.
+    if (best.fitness >= this.bestEverFitness) {
+      const validated = validatePolicy(
+        this.environment,
+        best.policy,
+        VALIDATION_GAMES,
+      );
+      if (validated.fitness >= this.bestEverFitness) {
+        this.bestEverFitness = validated.fitness;
+        this.bestFitnessGeneration = this.generation;
+        // Elites carry over, so the same policy can lead again; keep its game
+        // going.
+        if (!samePolicy(this.showcasePolicy, best.policy)) {
+          this.setShowcasePolicy(best.policy);
+        }
+      }
     }
 
     this.fitnessHistory.push(best.fitness);
@@ -243,9 +301,31 @@ export class CMAESTrainer implements TrainerController {
       this.fitnessHistory.shift();
     }
 
-    this.population = nextPolicies.map((policy) =>
+    // Restart the search if it hasn't learned to clear the board within its
+    // budget, judged by one check on fresh games (a running record of noisy
+    // scores keeps creeping up, so it can't tell a stuck run from a slow
+    // one). The showcase keeps the best policy found so far.
+    let policies = nextPolicies;
+    if (
+      !this.runClearsBoard &&
+      this.generation - this.runStartGeneration >= RESTART_AFTER
+    ) {
+      const check = validatePolicy(
+        this.environment,
+        best.policy,
+        RESTART_CHECK_GAMES,
+      );
+      this.runClearsBoard = check.clearRate >= 0.5;
+      if (!this.runClearsBoard) {
+        this.runStartGeneration = this.generation;
+        policies = this.es.initializePopulation();
+      }
+    }
+
+    this.population = policies.map((policy) =>
       this.environment.createAgent(policy),
     );
+    this.resetEvaluation();
     this.generation += 1;
     this.invalidateRandomBoardAgents();
   }
