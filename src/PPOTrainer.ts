@@ -1,6 +1,8 @@
 import {
   PPO_RESTART_AFTER,
   PPO_ROLLOUT_HORIZON,
+  PPO_SETTLE_CHECK_AFTER,
+  PPO_SETTLED_ENTROPY,
   PPO_VALIDATE_EVERY,
   RESTART_CHECK_GAMES,
   ROLLOUT_BATCH_SIZE,
@@ -37,6 +39,7 @@ export class PPOTrainer implements TrainerController {
   // the board-clearing check.
   private runStartUpdate = 1;
   private runClearsBoard = false;
+  private policyEntropy = Number.POSITIVE_INFINITY;
   private fitnessHistory: number[] = [];
   private completedEpisodeBestScore = 0;
   private completedEpisodeBestFitness = Number.NEGATIVE_INFINITY;
@@ -330,7 +333,7 @@ export class PPOTrainer implements TrainerController {
       this.initializeRolloutBatch();
       this.runStartUpdate = this.ppoUpdate;
     } else {
-      this.ppo.train(this.buildRollouts());
+      this.policyEntropy = this.ppo.train(this.buildRollouts()).entropy;
 
       this.syncRolloutAgentPolicies();
       this.clearTrajectories();
@@ -341,14 +344,20 @@ export class PPOTrainer implements TrainerController {
     this.invalidateRandomBoardAgents();
   }
 
-  // Most runs never learn to clear the board. Networks that haven't
-  // within their budget are reinitialised, judged by one check on fresh
-  // games. The display keeps the best policy found so far.
+  // Most runs never learn to clear the board. Networks that are still
+  // choosing moves too randomly partway in, or that haven't learned it within
+  // their budget (judged by one check on fresh games), are reinitialised. The
+  // display keeps the best policy found so far.
   private shouldRestart(): boolean {
-    if (
-      this.runClearsBoard ||
-      this.ppoUpdate - this.runStartUpdate < PPO_RESTART_AFTER
-    ) {
+    if (this.runClearsBoard) {
+      return false;
+    }
+
+    const age = this.ppoUpdate - this.runStartUpdate;
+    if (age === PPO_SETTLE_CHECK_AFTER) {
+      return this.policyEntropy > PPO_SETTLED_ENTROPY;
+    }
+    if (age < PPO_RESTART_AFTER) {
       return false;
     }
 

@@ -57,6 +57,12 @@ export const PPO_VALIDATE_EVERY = 10;
 // PPO's budget to learn to clear the board before its networks are reset.
 // Runs that get there are usually clearing over half their games by then.
 export const PPO_RESTART_AFTER = 1000;
+// Runs that go on to clear the board have mostly settled on their moves this
+// many updates in (rollout policy entropy, in nats, at or below the limit).
+// Runs still choosing more randomly than that rarely get there, so they reset
+// early. The limit depends on PPO_ENTROPY_COEFFICIENT.
+export const PPO_SETTLE_CHECK_AFTER = 300;
+export const PPO_SETTLED_ENTROPY = 0.2;
 export let BASE_HUNGER = 0;
 
 export const NORMAL_STEPS_PER_SECOND = 15;
