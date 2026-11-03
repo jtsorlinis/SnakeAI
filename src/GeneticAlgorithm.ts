@@ -1,6 +1,5 @@
 import {
   ELITE_COUNT,
-  GRID_SIZE,
   MUTATION_RATE,
   MUTATION_SIZE,
   POLICY_PARAM_COUNT,
@@ -25,11 +24,8 @@ export class GeneticAlgorithm {
     return policy;
   }
 
+  // Agents arrive with fitness already averaged over their evaluation games.
   public evolve(population: Agent[]): EvolutionResult {
-    for (const agent of population) {
-      agent.fitness = this.fitness(agent);
-    }
-
     const ranked = [...population].sort((a, b) => b.fitness - a.fitness);
     const nextPolicies: PolicyParams[] = [];
 
@@ -59,11 +55,11 @@ export class GeneticAlgorithm {
     return Math.floor(Math.random() * maxExclusive);
   }
 
-  private fitness(agent: Agent): number {
-    const foodReward = agent.score;
-    const deathPenalty = agent.terminalReason === "collision" ? 1 : 0;
-    const stepPenalty = agent.steps / (GRID_SIZE * GRID_SIZE);
-    return foodReward - deathPenalty - stepPenalty;
+  // Score only. Clearing the board takes a slow space-filling sweep, and a
+  // step penalty made that lose to greedy food chasing that traps itself.
+  // Hunger already ends games that stall.
+  public fitness(agent: Agent): number {
+    return agent.score + (agent.terminalReason === "solved" ? 1 : 0);
   }
 
   private crossover(a: PolicyParams, b: PolicyParams): PolicyParams {

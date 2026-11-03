@@ -1,4 +1,10 @@
-import { POP_SIZE } from "./config";
+import {
+  GA_EVAL_GAMES,
+  GA_RESTART_AFTER,
+  GA_RESTART_CHECK_GAMES,
+  GA_VALIDATION_GAMES,
+  POP_SIZE,
+} from "./config";
 import { GeneticAlgorithm } from "./GeneticAlgorithm";
 import { NeuralNetwork } from "./NeuralNetwork";
 import { ReplayEvaluator } from "./ReplayEvaluator";
@@ -18,10 +24,16 @@ export class GATrainer implements TrainerController {
   private readonly replay = new ReplayEvaluator(this.environment);
 
   private population: Agent[] = [];
+  private gamesPlayed: number[] = [];
+  private fitnessTotals: number[] = [];
   private generation = 1;
   private bestEverScore = 0;
   private bestEverFitness = 0;
   private bestFitnessGeneration = 1;
+  // When the current population was seeded, and whether it has passed the
+  // board-clearing check.
+  private runStartGeneration = 1;
+  private runClearsBoard = false;
   private fitnessHistory: number[] = [];
 
   private showcasePolicy: PolicyParams | null = null;
@@ -39,6 +51,8 @@ export class GATrainer implements TrainerController {
     this.bestEverScore = 0;
     this.bestEverFitness = 0;
     this.bestFitnessGeneration = 1;
+    this.runStartGeneration = 1;
+    this.runClearsBoard = false;
     this.fitnessHistory = [];
     this.showcasePolicy = null;
     this.showcaseAgent = null;
@@ -47,6 +61,7 @@ export class GATrainer implements TrainerController {
     for (let i = 0; i < POP_SIZE; i++) {
       this.population.push(this.environment.createAgent(this.ga.randomPolicy()));
     }
+    this.resetEvaluation();
 
     if (this.population.length > 0) {
       this.setShowcasePolicy(this.population[0].policy);
@@ -57,13 +72,14 @@ export class GATrainer implements TrainerController {
     for (let i = 0; i < stepCount; i++) {
       let alive = 0;
 
-      for (const agent of this.population) {
+      for (let a = 0; a < this.population.length; a++) {
+        const agent = this.population[a];
         if (!agent.alive) {
           continue;
         }
 
         this.environment.step(agent);
-        if (agent.alive) {
+        if (agent.alive || this.finishGame(a)) {
           alive += 1;
         }
       }
@@ -130,6 +146,9 @@ export class GATrainer implements TrainerController {
     this.population = this.population.map((agent) =>
       this.environment.createAgent(agent.policy),
     );
+    this.resetEvaluation();
+    this.runStartGeneration = this.generation;
+    this.runClearsBoard = false;
 
     if (this.showcasePolicy) {
       this.showcaseAgent = this.environment.createAgent(this.showcasePolicy);
@@ -155,6 +174,12 @@ export class GATrainer implements TrainerController {
     this.showcasePolicy = new Float32Array(policy);
     this.showcaseAgent = this.environment.createAgent(this.showcasePolicy);
     this.replay.setPolicy(this.showcasePolicy);
+  }
+
+  // Elites carry over, so the same policy can lead again; keep its game going.
+  private isShowcasing(policy: PolicyParams): boolean {
+    const current = this.showcasePolicy;
+    return current !== null && current.every((weight, i) => weight === policy[i]);
   }
 
   private invalidateRandomBoardAgents(): void {
@@ -228,14 +253,65 @@ export class GATrainer implements TrainerController {
     return this.randomBoardAgents;
   }
 
+  private resetEvaluation(): void {
+    this.gamesPlayed = this.population.map(() => 0);
+    this.fitnessTotals = this.population.map(() => 0);
+  }
+
+  // Records a finished game. Returns true if the agent starts another one.
+  private finishGame(index: number): boolean {
+    const agent = this.population[index];
+    this.bestEverScore = Math.max(this.bestEverScore, agent.score);
+    this.fitnessTotals[index] += this.ga.fitness(agent);
+    this.gamesPlayed[index] += 1;
+
+    if (this.gamesPlayed[index] >= GA_EVAL_GAMES) {
+      return false;
+    }
+
+    this.population[index] = this.environment.createAgent(agent.policy);
+    return true;
+  }
+
+  private validate(
+    policy: PolicyParams,
+    games = GA_VALIDATION_GAMES,
+  ): { fitness: number; clearRate: number } {
+    let total = 0;
+    let clears = 0;
+    for (let i = 0; i < games; i++) {
+      const agent = this.environment.createAgent(policy);
+      while (agent.alive) {
+        this.environment.step(agent);
+      }
+      total += this.ga.fitness(agent);
+      if (agent.terminalReason === "solved") {
+        clears += 1;
+      }
+    }
+    return { fitness: total / games, clearRate: clears / games };
+  }
+
   private evolve(): void {
+    for (let a = 0; a < this.population.length; a++) {
+      this.population[a].fitness = this.fitnessTotals[a] / this.gamesPlayed[a];
+    }
+
     const { best, nextPolicies } = this.ga.evolve(this.population);
 
-    this.bestEverScore = Math.max(this.bestEverScore, best.score);
-    if (this.generation === 1 || best.fitness > this.bestEverFitness) {
-      this.bestEverFitness = best.fitness;
-      this.bestFitnessGeneration = this.generation;
-      this.setShowcasePolicy(best.policy);
+    // The leader's mean is the max of many noisy estimates, so it only takes
+    // over the display if it also does well on fresh games. Ties go to the
+    // newer leader: fitness caps out once games are won, and a strict
+    // comparison would freeze the first lucky perfect run on display.
+    if (best.fitness >= this.bestEverFitness) {
+      const validated = this.validate(best.policy);
+      if (validated.fitness >= this.bestEverFitness) {
+        this.bestEverFitness = validated.fitness;
+        this.bestFitnessGeneration = this.generation;
+        if (!this.isShowcasing(best.policy)) {
+          this.setShowcasePolicy(best.policy);
+        }
+      }
     }
 
     this.fitnessHistory.push(best.fitness);
@@ -243,9 +319,27 @@ export class GATrainer implements TrainerController {
       this.fitnessHistory.shift();
     }
 
+    // Reseed a population that hasn't learned to clear the board within its
+    // budget, judged by one check on fresh games (a running record of noisy
+    // scores keeps creeping up, so it can't tell a stuck run from a slow
+    // one). The showcase keeps the best policy found so far.
+    let restart = false;
+    if (
+      !this.runClearsBoard &&
+      this.generation - this.runStartGeneration >= GA_RESTART_AFTER
+    ) {
+      const check = this.validate(best.policy, GA_RESTART_CHECK_GAMES);
+      this.runClearsBoard = check.clearRate >= 0.5;
+      restart = !this.runClearsBoard;
+      if (restart) {
+        this.runStartGeneration = this.generation;
+      }
+    }
+
     this.population = nextPolicies.map((policy) =>
-      this.environment.createAgent(policy),
+      this.environment.createAgent(restart ? this.ga.randomPolicy() : policy),
     );
+    this.resetEvaluation();
     this.generation += 1;
     this.invalidateRandomBoardAgents();
   }
