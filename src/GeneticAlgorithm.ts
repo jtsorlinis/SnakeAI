@@ -1,7 +1,6 @@
 import {
   ELITE_COUNT,
-  MUTATION_RATE,
-  MUTATION_SIZE,
+  MUTATION_SIGMA,
   POLICY_PARAM_COUNT,
   POP_SIZE,
   TOURNAMENT_SIZE,
@@ -34,9 +33,7 @@ export class GeneticAlgorithm {
     }
 
     while (nextPolicies.length < POP_SIZE) {
-      const parentA = this.pickParent(ranked);
-      const parentB = this.pickParent(ranked);
-      const child = this.crossover(parentA.policy, parentB.policy);
+      const child = new Float32Array(this.pickParent(ranked).policy);
       this.mutate(child);
       nextPolicies.push(child);
     }
@@ -55,19 +52,15 @@ export class GeneticAlgorithm {
     return Math.floor(Math.random() * maxExclusive);
   }
 
-  private crossover(a: PolicyParams, b: PolicyParams): PolicyParams {
-    const child = new Float32Array(POLICY_PARAM_COUNT);
-    for (let i = 0; i < POLICY_PARAM_COUNT; i++) {
-      child[i] = Math.random() < 0.5 ? a[i] : b[i];
-    }
-    return child;
+  // Box-Muller. 1 - random() keeps the log argument above zero.
+  private randomNormal(): number {
+    const magnitude = Math.sqrt(-2 * Math.log(1 - Math.random()));
+    return magnitude * Math.cos(2 * Math.PI * Math.random());
   }
 
   private mutate(policy: PolicyParams): void {
     for (let i = 0; i < policy.length; i++) {
-      if (Math.random() < MUTATION_RATE) {
-        policy[i] += this.randomRange(-MUTATION_SIZE, MUTATION_SIZE);
-      }
+      policy[i] += this.randomNormal() * MUTATION_SIGMA;
     }
   }
 

@@ -20,8 +20,10 @@ export const REPLAY_AGENT_COUNT = 8;
 export const POP_SIZE = 180;
 export const ELITE_COUNT = 8;
 export const TOURNAMENT_SIZE = 4;
-export const MUTATION_RATE = 0.08;
-export const MUTATION_SIZE = 0.35;
+// GA children are a copy of one parent with Gaussian noise of this size added
+// to every weight. Changing a few weights by a lot, and mixing two parents,
+// left over half of populations stuck on food chasing that traps itself.
+export const MUTATION_SIGMA = 0.12;
 // Each GA/CMA-ES policy plays this many games per generation and is ranked on
 // the mean. A single game is mostly food-placement luck.
 export const EVAL_GAMES = 3;
