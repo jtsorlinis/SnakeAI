@@ -34,10 +34,12 @@
         <section class="card net-card">
           <header class="card-header">
             <h2 class="card-title">
-              <span class="view-network">Policy network</span>
+              <span class="view-network view-sensors">Policy network</span>
+              <span class="view-network view-board">What the policy sees</span>
               <span class="view-population">All snakes</span>
             </h2>
-            <div class="legend view-network" aria-hidden="true">
+            <span class="card-meta view-network view-board">Head in the middle, facing up</span>
+            <div class="legend view-network view-sensors" aria-hidden="true">
               <span class="legend-item"><i class="swatch positive"></i>+ weight</span>
               <span class="legend-item"><i class="swatch negative"></i>− weight</span>
             </div>
@@ -46,7 +48,7 @@
           <canvas
             id="netCanvas"
             class="square-canvas"
-            aria-label="Policy network, or a grid of sampled snakes"
+            aria-label="Policy network or what the policy sees, or a grid of sampled snakes"
           ></canvas>
         </section>
 
@@ -137,6 +139,13 @@
                   <input type="radio" name="algorithm" value="ppo" />
                   <span class="segment-body">
                     <span class="segment-name">PPO</span>
+                    <span class="segment-kind">Gradient</span>
+                  </span>
+                </label>
+                <label class="segment">
+                  <input type="radio" name="algorithm" value="boardppo" />
+                  <span class="segment-body">
+                    <span class="segment-name">Board PPO</span>
                     <span class="segment-kind">Gradient</span>
                   </span>
                 </label>

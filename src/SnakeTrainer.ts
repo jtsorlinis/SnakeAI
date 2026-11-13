@@ -1,6 +1,7 @@
 import { CMAESTrainer } from "./CMAESTrainer";
 import { GATrainer } from "./GATrainer";
 import { PPOTrainer } from "./PPOTrainer";
+import { VisionPPOTrainer } from "./VisionPPOTrainer";
 import type {
   PolicyPlaybackMode,
   TrainerAlgorithm,
@@ -57,7 +58,9 @@ export class SnakeTrainer {
         ? new GATrainer()
         : algorithm === "cmaes"
           ? new CMAESTrainer()
-          : new PPOTrainer();
+          : algorithm === "ppo"
+            ? new PPOTrainer()
+            : new VisionPPOTrainer();
 
     if (trainer.supportsPlaybackMode()) {
       trainer.setPlaybackMode(this.playbackMode);

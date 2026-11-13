@@ -74,6 +74,31 @@ export const PPO_RESTART_AFTER = 1000;
 // early. The limit depends on PPO_ENTROPY_COEFFICIENT and its fade.
 export const PPO_SETTLE_CHECK_AFTER = 300;
 export const PPO_SETTLED_ENTROPY = 0.2;
+// Board PPO: the policy reads the whole board, re-drawn from the snake's point
+// of view, instead of the ten sensors. It uses the rollout batch, horizon, clip
+// range, epochs and minibatch size above.
+// A first layer of 128 showed no clear gain (90% of games cleared against
+// 88%, four seeds each) and took about 70% longer per update.
+export const VISION_HIDDEN_UNITS: readonly number[] = [64, 64];
+// With a critic that sees the whole board, bootstrapped advantages are sound.
+export const VISION_GAMMA = 0.998;
+export const VISION_GAE_LAMBDA = 0.95;
+// Both stay constant. Decaying the learning rate left one run in four stuck
+// at a score of about 90 without ever clearing the board.
+export const VISION_LEARNING_RATE = 3e-4;
+export const VISION_ENTROPY_COEFFICIENT = 0.01;
+export const VISION_MAX_GRAD_NORM = 0.5;
+// Board PPO's reward for clearing the board; each food is worth 1 and dying
+// costs 1. The 50 that helps sensor PPO made training unstable here.
+export const VISION_CLEAR_REWARD = 1;
+// How much of a running average of the policy weights each update keeps; the
+// rest comes from the live weights. The average plays more steadily than the
+// live weights, so it is what gets validated and shown.
+export const VISION_POLICY_AVERAGE_DECAY = 0.95;
+// A Board PPO update is too slow to run in one go, so it is spread over
+// simulation steps, this many samples at a time (about the cost of moving
+// the whole rollout batch once).
+export const VISION_TRAIN_SAMPLES_PER_STEP = 60;
 export let BASE_HUNGER = 0;
 
 export const NORMAL_STEPS_PER_SECOND = 15;

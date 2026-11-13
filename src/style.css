@@ -202,6 +202,16 @@ canvas {
   display: none;
 }
 
+/* Board PPO has no weight diagram; its left card shows the policy's input. */
+.view-board,
+.layout[data-algorithm="boardppo"] .view-sensors {
+  display: none;
+}
+
+.layout[data-algorithm="boardppo"] .view-board {
+  display: inline;
+}
+
 .layout:has(#leftViewToggle:checked) .view-network {
   display: none;
 }
@@ -399,7 +409,7 @@ canvas {
 
 .segmented {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 3px;
   padding: 3px;
   border-radius: var(--radius-inner);

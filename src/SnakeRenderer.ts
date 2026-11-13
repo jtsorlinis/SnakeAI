@@ -15,7 +15,7 @@ import {
   OUTPUT_LABELS,
   MULTI_VIEW_COLUMNS,
 } from "./config";
-import type { Agent, Point, TrainerState } from "./types";
+import type { Agent, Point, TrainerState, VisionView } from "./types";
 
 type RendererElements = {
   netCanvas: HTMLCanvasElement;
@@ -83,6 +83,7 @@ export class SnakeRenderer {
   private readonly chart: HTMLCanvasElement;
   private readonly chartCtx: CanvasRenderingContext2D;
 
+  private readonly statsRoot: HTMLElement;
   private readonly statFields = new Map<string, HTMLElement[]>();
   private readonly aliveMeter: HTMLElement | null;
 
@@ -105,6 +106,7 @@ export class SnakeRenderer {
     this.ctx = this.board.getContext("2d") as CanvasRenderingContext2D;
     this.chartCtx = this.chart.getContext("2d") as CanvasRenderingContext2D;
 
+    this.statsRoot = elements.statsRoot;
     elements.statsRoot
       .querySelectorAll<HTMLElement>("[data-stat]")
       .forEach((element) => {
@@ -231,12 +233,107 @@ export class SnakeRenderer {
     return dx * dx + dy * dy;
   }
 
+  // Board PPO's network is far too large to draw weight by weight, so this
+  // shows its input instead: the board as the policy sees it, and how
+  // strongly it leans towards each move.
+  private drawVision(view: VisionView): void {
+    const ctx = this.netCtx;
+    const viewSize = 368;
+    const originX = (NET_WIDTH - viewSize) / 2;
+    const originY = 20;
+    const tile = viewSize / view.size;
+    const inset = blockInset(tile);
+    const block = tile - inset * 2;
+
+    this.net.style.cursor = "default";
+
+    for (let row = 0; row < view.size; row++) {
+      for (let col = 0; col < view.size; col++) {
+        const cell = row * view.size + col;
+        const x = originX + col * tile;
+        const y = originY + row * tile;
+
+        if (!view.inside[cell]) {
+          ctx.fillStyle = rgba(NEGATIVE, 0.1);
+          ctx.fillRect(x, y, tile, tile);
+          continue;
+        }
+        if ((row + col) % 2 === 1) {
+          ctx.fillStyle = TILE_ALT;
+          ctx.fillRect(x, y, tile, tile);
+        }
+
+        if (cell === view.food) {
+          ctx.fillStyle = rgba(FOOD);
+          ctx.fillRect(x + inset, y + inset, block, block);
+        } else if (view.body[cell] > 0) {
+          ctx.fillStyle = mixRgb(SNAKE_HEAD, SNAKE_TAIL, 1 - view.body[cell]);
+          ctx.fillRect(x + inset, y + inset, block, block);
+        }
+      }
+    }
+
+    // The head is always the middle cell, facing up.
+    const middle = originX + viewSize / 2;
+    const headTop = originY + viewSize / 2 - tile / 2;
+    ctx.fillStyle = CANVAS_BG;
+    ctx.beginPath();
+    ctx.moveTo(middle, headTop + tile * 0.26);
+    ctx.lineTo(middle + tile * 0.24, headTop + tile * 0.68);
+    ctx.lineTo(middle - tile * 0.24, headTop + tile * 0.68);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(originX + 0.5, originY + 0.5, viewSize - 1, viewSize - 1);
+
+    // Left, straight, right, in the order they appear on screen.
+    const moves = [1, 0, 2];
+    const gap = 14;
+    const barWidth = (viewSize - gap * 2) / 3;
+    const labelY = originY + viewSize + 24;
+    ctx.textBaseline = "middle";
+    for (let slot = 0; slot < moves.length; slot++) {
+      const move = moves[slot];
+      const probability = view.probabilities[move];
+      const chosen = move === view.best;
+      const x = originX + slot * (barWidth + gap);
+
+      ctx.textAlign = "left";
+      ctx.font = `${chosen ? 600 : 500} 12px ${UI_FONT}`;
+      ctx.fillStyle = chosen ? rgba(CHOSEN) : TEXT;
+      ctx.fillText(OUTPUT_LABELS[move], x, labelY);
+
+      ctx.textAlign = "right";
+      ctx.font = `11px ${MONO_FONT}`;
+      ctx.fillStyle = chosen ? rgba(CHOSEN) : TEXT_MUTED;
+      ctx.fillText(`${Math.round(probability * 100)}%`, x + barWidth, labelY);
+
+      ctx.beginPath();
+      ctx.roundRect(x, labelY + 14, barWidth, 6, 3);
+      ctx.fillStyle = NODE_FILL;
+      ctx.fill();
+      if (probability > 0.005) {
+        ctx.beginPath();
+        ctx.roundRect(x, labelY + 14, barWidth * probability, 6, 3);
+        ctx.fillStyle = rgba(chosen ? CHOSEN : POSITIVE, chosen ? 0.95 : 0.6);
+        ctx.fill();
+      }
+    }
+  }
+
   private drawNetwork(state: TrainerState): void {
     const { policy, activations } = state.network;
     const ctx = this.netCtx;
 
     ctx.fillStyle = CANVAS_BG;
     ctx.fillRect(0, 0, NET_WIDTH, NET_HEIGHT);
+
+    if (state.vision) {
+      this.drawVision(state.vision);
+      return;
+    }
 
     if (!policy || !activations) {
       return;
@@ -804,6 +901,10 @@ export class SnakeRenderer {
     this.setStat("stale", String(state.staleIterations));
     this.setStat("historyLabel", state.historyLabel);
     this.setStat("boardScore", String(state.boardAgent.score));
+    // Lets the stylesheet pick the left card's title for this algorithm.
+    if (this.statsRoot.dataset.algorithm !== state.algorithm) {
+      this.statsRoot.dataset.algorithm = state.algorithm;
+    }
 
     if (this.aliveMeter) {
       const ratio = state.batchSize > 0 ? state.alive / state.batchSize : 0;
