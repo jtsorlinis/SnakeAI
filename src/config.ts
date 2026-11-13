@@ -52,7 +52,16 @@ export const PPO_MINIBATCH_SIZE = 256;
 export const PPO_POLICY_LEARNING_RATE = 1.2e-3;
 export const PPO_VALUE_LEARNING_RATE = 1e-3;
 export const PPO_VALUE_COEFFICIENT = 0.5;
+// The entropy bonus fades linearly from this to zero over the first
+// PPO_ENTROPY_FADE_UPDATES of a run. Kept on, the policy still picks a move
+// it doesn't prefer on 5-10% of steps after 10000 updates and never settles
+// on the sweep that clears the board.
 export const PPO_ENTROPY_COEFFICIENT = 0.01;
+export const PPO_ENTROPY_FADE_UPDATES = 500;
+// PPO's reward for clearing the board; each food is worth 1. Near the end a
+// snake expects to die soon, so finishing has to be worth much more than the
+// last few food. It doesn't help a run that never clears.
+export const PPO_CLEAR_REWARD = 50;
 export const PPO_MAX_GRAD_NORM = 1;
 // PPO updates between greedy validations of the policy for the display.
 export const PPO_VALIDATE_EVERY = 10;
@@ -62,7 +71,7 @@ export const PPO_RESTART_AFTER = 1000;
 // Runs that go on to clear the board have mostly settled on their moves this
 // many updates in (rollout policy entropy, in nats, at or below the limit).
 // Runs still choosing more randomly than that rarely get there, so they reset
-// early. The limit depends on PPO_ENTROPY_COEFFICIENT.
+// early. The limit depends on PPO_ENTROPY_COEFFICIENT and its fade.
 export const PPO_SETTLE_CHECK_AFTER = 300;
 export const PPO_SETTLED_ENTROPY = 0.2;
 export let BASE_HUNGER = 0;

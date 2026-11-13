@@ -1,4 +1,7 @@
 import {
+  PPO_CLEAR_REWARD,
+  PPO_ENTROPY_COEFFICIENT,
+  PPO_ENTROPY_FADE_UPDATES,
   PPO_RESTART_AFTER,
   PPO_ROLLOUT_HORIZON,
   PPO_SETTLE_CHECK_AFTER,
@@ -333,7 +336,10 @@ export class PPOTrainer implements TrainerController {
       this.initializeRolloutBatch();
       this.runStartUpdate = this.ppoUpdate;
     } else {
-      this.policyEntropy = this.ppo.train(this.buildRollouts()).entropy;
+      this.policyEntropy = this.ppo.train(
+        this.buildRollouts(),
+        this.entropyCoefficient(),
+      ).entropy;
 
       this.syncRolloutAgentPolicies();
       this.clearTrajectories();
@@ -368,6 +374,14 @@ export class PPOTrainer implements TrainerController {
     );
     this.runClearsBoard = check.clearRate >= 0.5;
     return !this.runClearsBoard;
+  }
+
+  // Fades with the age of the run, so it starts again after a reset.
+  private entropyCoefficient(): number {
+    const age = this.ppoUpdate - this.runStartUpdate;
+    return (
+      PPO_ENTROPY_COEFFICIENT * Math.max(0, 1 - age / PPO_ENTROPY_FADE_UPDATES)
+    );
   }
 
   private buildRollouts(): PPORollout[] {
@@ -406,7 +420,7 @@ export class PPOTrainer implements TrainerController {
   private computeReward(agent: Agent, previousScore: number): number {
     let reward = agent.score - previousScore;
     if (agent.terminalReason === "solved") {
-      reward += 1;
+      reward += PPO_CLEAR_REWARD;
     } else if (agent.terminalReason === "collision") {
       reward -= 1;
     }

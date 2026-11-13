@@ -9,7 +9,6 @@ import {
   OFFSET_O_BIAS,
   OUTPUTS,
   PPO_CLIP_EPSILON,
-  PPO_ENTROPY_COEFFICIENT,
   PPO_EPOCHS,
   PPO_GAE_LAMBDA,
   PPO_GAMMA,
@@ -195,7 +194,10 @@ export class PPOOptimizer {
     return this.critic.forward(observation);
   }
 
-  public train(rollouts: readonly PPORollout[]): PPOUpdateStats {
+  public train(
+    rollouts: readonly PPORollout[],
+    entropyCoefficient: number,
+  ): PPOUpdateStats {
     const batch = this.buildBatch(rollouts);
     if (batch.size === 0) {
       return {
@@ -276,11 +278,11 @@ export class PPOOptimizer {
 
           const entropy = this.entropy(this.probabilities);
           miniEntropy += entropy;
-          if (PPO_ENTROPY_COEFFICIENT > 0) {
+          if (entropyCoefficient > 0) {
             this.entropyGradient(this.probabilities, this.entropyGradientBuffer);
             for (let output = 0; output < OUTPUTS; output++) {
               this.logitsGradient[output] -=
-                (PPO_ENTROPY_COEFFICIENT * this.entropyGradientBuffer[output]) /
+                (entropyCoefficient * this.entropyGradientBuffer[output]) /
                 miniBatchSize;
             }
           }
