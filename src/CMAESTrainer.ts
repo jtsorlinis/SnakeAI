@@ -151,7 +151,19 @@ export class CMAESTrainer implements TrainerController {
     this.runStartGeneration = this.generation;
     this.runClearsBoard = false;
 
+    // Scores from the other board size don't compare, so the records start
+    // again from what the shown policy does on this one.
+    this.bestEverScore = 0;
+    this.bestEverFitness = 0;
+    this.bestFitnessGeneration = this.generation;
+    this.fitnessHistory = [];
+
     if (this.showcasePolicy) {
+      this.bestEverFitness = validatePolicy(
+        this.environment,
+        this.showcasePolicy,
+        VALIDATION_GAMES,
+      ).fitness;
       this.showcaseAgent = this.environment.createAgent(this.showcasePolicy);
     } else {
       this.showcaseAgent = null;

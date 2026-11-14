@@ -171,11 +171,24 @@ export class PPOTrainer implements TrainerController {
   }
 
   public onGridSizeChanged(): void {
+    // The networks carry on as the same run. Starting the entropy bonus and
+    // the restart budget again undid a policy that had learned the other
+    // board size, and PPO doesn't learn the large board from scratch.
     this.initializeRolloutBatch();
-    this.runStartUpdate = this.ppoUpdate;
-    this.runClearsBoard = false;
+
+    // Scores from the other board size don't compare, so the records start
+    // again from what the shown policy does on this one.
+    this.bestEverScore = 0;
+    this.bestEverFitness = 0;
+    this.bestFitnessUpdate = this.ppoUpdate;
+    this.fitnessHistory = [];
 
     if (this.displayPolicy) {
+      this.bestEverFitness = validatePolicy(
+        this.environment,
+        this.displayPolicy,
+        VALIDATION_GAMES,
+      ).fitness;
       this.displayAgent = this.environment.createAgent(this.displayPolicy);
     } else {
       this.displayAgent = null;
