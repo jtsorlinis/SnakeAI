@@ -35,11 +35,17 @@ export class SnakeEnvironment {
       { x: x - 2, y },
     ];
 
+    const cells = new Uint8Array(GRID_SIZE * GRID_SIZE);
+    for (const part of body) {
+      cells[part.y * GRID_SIZE + part.x] = 1;
+    }
+
     return {
       policy: new Float32Array(policy),
       body,
+      cells,
       dir: 1,
-      food: this.randomFood(body),
+      food: this.randomFood(cells),
       alive: true,
       score: 0,
       steps: 0,
@@ -106,15 +112,24 @@ export class SnakeEnvironment {
     }
 
     const ate = next.x === agent.food.x && next.y === agent.food.y;
-    const len = ate ? agent.body.length : agent.body.length - 1;
+    const nextCell = next.y * GRID_SIZE + next.x;
 
-    if (this.pointInBody(agent.body, next, len)) {
-      agent.alive = false;
-      agent.terminalReason = "collision";
-      return;
+    if (agent.cells[nextCell] === 1) {
+      // The tail tip moves out of the way, unless the snake is eating.
+      const tail = agent.body[agent.body.length - 1];
+      if (ate || tail.x !== next.x || tail.y !== next.y) {
+        agent.alive = false;
+        agent.terminalReason = "collision";
+        return;
+      }
     }
 
+    if (!ate) {
+      const tail = agent.body.pop()!;
+      agent.cells[tail.y * GRID_SIZE + tail.x] = 0;
+    }
     agent.body.unshift(next);
+    agent.cells[nextCell] = 1;
 
     if (ate) {
       agent.score += 1;
@@ -126,9 +141,7 @@ export class SnakeEnvironment {
       }
 
       agent.hunger = BASE_HUNGER;
-      agent.food = this.randomFood(agent.body);
-    } else {
-      agent.body.pop();
+      agent.food = this.randomFood(agent.cells);
     }
 
     if (agent.hunger <= 0) {
@@ -166,30 +179,16 @@ export class SnakeEnvironment {
     return Math.floor(Math.random() * maxExclusive);
   }
 
-  private randomFood(body: Point[]): Point {
-    if (body.length >= GRID_SIZE * GRID_SIZE) {
-      return { ...body[0] };
-    }
-
+  // There is always a free cell to find: a game ends as solved before the
+  // body covers the whole board.
+  private randomFood(cells: Uint8Array): Point {
     while (true) {
-      const point = {
-        x: this.randomIndex(GRID_SIZE),
-        y: this.randomIndex(GRID_SIZE),
-      };
-      if (!this.pointInBody(body, point, body.length)) {
-        return point;
+      const x = this.randomIndex(GRID_SIZE);
+      const y = this.randomIndex(GRID_SIZE);
+      if (cells[y * GRID_SIZE + x] === 0) {
+        return { x, y };
       }
     }
-  }
-
-  private pointInBody(body: Point[], point: Point, len: number): boolean {
-    for (let i = 0; i < len; i++) {
-      const part = body[i];
-      if (part.x === point.x && part.y === point.y) {
-        return true;
-      }
-    }
-    return false;
   }
 
   private outOfBounds(x: number, y: number): boolean {
@@ -199,7 +198,7 @@ export class SnakeEnvironment {
   private checkForObstacle(
     head: Point,
     direction: Point,
-    snake: Point[],
+    cells: Uint8Array,
   ): number {
     const checkX = head.x + direction.x;
     const checkY = head.y + direction.y;
@@ -208,19 +207,13 @@ export class SnakeEnvironment {
       return 1;
     }
 
-    for (let i = 1; i < snake.length; i++) {
-      if (snake[i].x === checkX && snake[i].y === checkY) {
-        return 1;
-      }
-    }
-
-    return 0;
+    return cells[checkY * GRID_SIZE + checkX];
   }
 
   private findTailDistance(
     head: Point,
     direction: Point,
-    snake: Point[],
+    cells: Uint8Array,
   ): number {
     for (let distance = 1; distance <= GRID_SIZE; distance++) {
       const x = head.x + direction.x * distance;
@@ -230,10 +223,8 @@ export class SnakeEnvironment {
         return 0;
       }
 
-      for (let i = 1; i < snake.length; i++) {
-        if (snake[i].x === x && snake[i].y === y) {
-          return 1 / distance;
-        }
+      if (cells[y * GRID_SIZE + x] === 1) {
+        return 1 / distance;
       }
     }
 
@@ -253,12 +244,12 @@ export class SnakeEnvironment {
     const left = DIRS[(agent.dir + 3) % 4];
     const right = DIRS[(agent.dir + 1) % 4];
 
-    target[0] = this.checkForObstacle(head, front, agent.body);
-    target[1] = this.checkForObstacle(head, left, agent.body);
-    target[2] = this.checkForObstacle(head, right, agent.body);
-    target[3] = this.findTailDistance(head, front, agent.body);
-    target[4] = this.findTailDistance(head, left, agent.body);
-    target[5] = this.findTailDistance(head, right, agent.body);
+    target[0] = this.checkForObstacle(head, front, agent.cells);
+    target[1] = this.checkForObstacle(head, left, agent.cells);
+    target[2] = this.checkForObstacle(head, right, agent.cells);
+    target[3] = this.findTailDistance(head, front, agent.cells);
+    target[4] = this.findTailDistance(head, left, agent.cells);
+    target[5] = this.findTailDistance(head, right, agent.cells);
     target[6] = this.checkForFood(head, front, agent.food);
     target[7] = this.checkForFood(head, left, agent.food);
     target[8] = front.x;

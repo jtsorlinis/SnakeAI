@@ -15,6 +15,9 @@ export type TerminalReason = "collision" | "hunger" | "solved" | null;
 export type Agent = {
   policy: PolicyParams;
   body: Point[];
+  // 1 for every cell the body covers, row by row. Kept in step with body so
+  // the game doesn't have to search the body on every move.
+  cells: Uint8Array;
   dir: number;
   food: Point;
   alive: boolean;
