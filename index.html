@@ -169,14 +169,25 @@
               </label>
             </div>
 
-            <div class="field-row">
-              <span class="field-label" id="gridSizeLabel">Grid size</span>
-              <div class="stepper" role="group" aria-labelledby="gridSizeLabel">
-                <button id="gridDown" type="button" aria-label="Decrease grid size">−</button>
-                <span id="gridValue">10×10</span>
-                <button id="gridUp" type="button" aria-label="Increase grid size">+</button>
+            <fieldset id="boardSizePicker" class="field">
+              <legend class="field-label">Board size</legend>
+              <div class="segmented">
+                <label class="segment">
+                  <input type="radio" name="boardSize" value="10" checked />
+                  <span class="segment-body">
+                    <span class="segment-name">10×10</span>
+                    <span class="segment-kind">100 cells</span>
+                  </span>
+                </label>
+                <label class="segment">
+                  <input type="radio" name="boardSize" value="20" />
+                  <span class="segment-body">
+                    <span class="segment-name">20×20</span>
+                    <span class="segment-kind">400 cells</span>
+                  </span>
+                </label>
               </div>
-            </div>
+            </fieldset>
 
             <button id="resetTraining" class="reset-button" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true">

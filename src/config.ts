@@ -1,8 +1,7 @@
 import type { Point } from "./types";
 
-export const MIN_GRID_SIZE = 10;
-export const MAX_GRID_SIZE = 30;
-export const GRID_SIZE_STEP = 5;
+// The board sizes the board-size switch offers.
+export const GRID_SIZES: readonly number[] = [10, 20];
 export const DEFAULT_GRID_SIZE = 10;
 
 export let GRID_SIZE = DEFAULT_GRID_SIZE;
@@ -183,14 +182,8 @@ recalculateGridConfig();
 recalculateTopology();
 
 export function setGridSize(nextSize: number): number {
-  const clamped = Math.min(MAX_GRID_SIZE, Math.max(MIN_GRID_SIZE, nextSize));
-  const snapped =
-    MIN_GRID_SIZE +
-    Math.round((clamped - MIN_GRID_SIZE) / GRID_SIZE_STEP) * GRID_SIZE_STEP;
-  const normalized = Math.min(MAX_GRID_SIZE, Math.max(MIN_GRID_SIZE, snapped));
-
-  if (normalized !== GRID_SIZE) {
-    GRID_SIZE = normalized;
+  if (GRID_SIZES.includes(nextSize) && nextSize !== GRID_SIZE) {
+    GRID_SIZE = nextSize;
     recalculateGridConfig();
   }
 

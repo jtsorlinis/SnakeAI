@@ -1,8 +1,5 @@
 import {
   GRID_SIZE,
-  GRID_SIZE_STEP,
-  MAX_GRID_SIZE,
-  MIN_GRID_SIZE,
   MULTI_VIEW_COUNT,
   NORMAL_STEPS_PER_SECOND,
   TURBO_TIME_BUDGET_MS,
@@ -18,10 +15,8 @@ export class Game {
   private readonly turboToggle: HTMLInputElement;
   private readonly leftViewToggle: HTMLInputElement;
   private readonly algorithmPicker: HTMLElement;
-  private readonly gridDownButton: HTMLButtonElement;
-  private readonly gridUpButton: HTMLButtonElement;
+  private readonly boardSizePicker: HTMLElement;
   private readonly resetButton: HTMLButtonElement;
-  private readonly gridValue: HTMLElement;
 
   private turboMode = false;
   private showMiniBoardsInLeft = false;
@@ -36,10 +31,8 @@ export class Game {
     this.turboToggle = this.getInput("turboToggle");
     this.leftViewToggle = this.getInput("leftViewToggle");
     this.algorithmPicker = this.getElement("algorithmPicker");
-    this.gridDownButton = this.getButton("gridDown");
-    this.gridUpButton = this.getButton("gridUp");
+    this.boardSizePicker = this.getElement("boardSizePicker");
     this.resetButton = this.getButton("resetTraining");
-    this.gridValue = this.getElement("gridValue");
 
     this.renderer = new SnakeRenderer({
       netCanvas,
@@ -68,16 +61,14 @@ export class Game {
       this.lastFrameTime = 0;
     });
 
-    this.gridDownButton.addEventListener("click", () => {
-      this.updateGridSize(-GRID_SIZE_STEP);
-    });
-    this.gridUpButton.addEventListener("click", () => {
-      this.updateGridSize(GRID_SIZE_STEP);
+    // A reloaded page can come back with either size selected.
+    this.applySelectedBoardSize();
+    this.boardSizePicker.addEventListener("change", () => {
+      this.applySelectedBoardSize();
     });
     this.resetButton.addEventListener("click", () => {
       this.resetTraining();
     });
-    this.refreshGridControls();
 
     requestAnimationFrame(this.loop);
   }
@@ -120,10 +111,11 @@ export class Game {
     return element;
   }
 
-  private updateGridSize(delta: number): void {
+  private applySelectedBoardSize(): void {
+    const checked =
+      this.boardSizePicker.querySelector<HTMLInputElement>("input:checked");
     const previous = GRID_SIZE;
-    const next = setGridSize(previous + delta);
-    this.refreshGridControls();
+    const next = setGridSize(Number(checked?.value ?? previous));
     if (next === previous) {
       return;
     }
@@ -131,12 +123,6 @@ export class Game {
     this.trainer.onGridSizeChanged();
     this.stepBudget = 0;
     this.lastFrameTime = 0;
-  }
-
-  private refreshGridControls(): void {
-    this.gridValue.textContent = `${GRID_SIZE}×${GRID_SIZE}`;
-    this.gridDownButton.disabled = GRID_SIZE <= MIN_GRID_SIZE;
-    this.gridUpButton.disabled = GRID_SIZE >= MAX_GRID_SIZE;
   }
 
   private resetTraining(): void {

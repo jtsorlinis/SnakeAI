@@ -556,65 +556,9 @@ canvas {
   outline-offset: 2px;
 }
 
-.field-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.field-row .field-label {
-  margin: 0;
-}
-
-.stepper {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px;
-  border-radius: var(--radius-inner);
-  border: 1px solid #161b23;
-  background: var(--inset);
-}
-
-.stepper button {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 1rem;
-  line-height: 1;
-  cursor: pointer;
-  transition:
-    background-color 120ms,
-    color 120ms;
-}
-
-.stepper button:hover:not(:disabled) {
-  background: var(--surface-raised);
-  color: var(--text);
-}
-
-.stepper button:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.stepper button:focus-visible,
 .reset-button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
-}
-
-#gridValue {
-  min-width: 64px;
-  text-align: center;
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: 0.8125rem;
-  font-weight: 500;
 }
 
 .reset-button {
