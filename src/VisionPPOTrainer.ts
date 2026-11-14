@@ -65,6 +65,10 @@ export class VisionPPOTrainer implements TrainerController {
   private candidateUpdate = 0;
   private candidateAgents: Agent[] = [];
   private candidateFitness = 0;
+  private candidateClears = 0;
+  // Set once a candidate clears the board in at least half of its games;
+  // training uses a smaller learning rate from then on.
+  private settled = false;
 
   constructor() {
     this.reset();
@@ -95,6 +99,7 @@ export class VisionPPOTrainer implements TrainerController {
 
     this.candidateAgents = [];
     this.candidateUpdate = 0;
+    this.settled = false;
     this.setDisplayPolicy(this.ppo.averagedPolicy);
   }
 
@@ -282,6 +287,7 @@ export class VisionPPOTrainer implements TrainerController {
       this.candidatePolicy = new Float32Array(this.ppo.averagedPolicy);
       this.candidateUpdate = this.ppoUpdate;
       this.candidateFitness = 0;
+      this.candidateClears = 0;
       for (let i = 0; i < VALIDATION_GAMES; i++) {
         this.candidateAgents.push(this.environment.createAgent(NO_POLICY));
       }
@@ -298,10 +304,18 @@ export class VisionPPOTrainer implements TrainerController {
         playing += 1;
       } else {
         this.candidateFitness += scoreFitness(agent) / VALIDATION_GAMES;
+        if (agent.terminalReason === "solved") {
+          this.candidateClears += 1;
+        }
       }
     }
     if (playing > 0) {
       return;
+    }
+
+    if (!this.settled && this.candidateClears * 2 >= VALIDATION_GAMES) {
+      this.settled = true;
+      this.ppo.settle();
     }
 
     // Ties go to the newer policy, as in the other trainers.

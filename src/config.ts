@@ -81,11 +81,20 @@ export const PPO_SETTLED_ENTROPY = 0.2;
 // 88%, four seeds each) and took about 70% longer per update.
 export const VISION_HIDDEN_UNITS: readonly number[] = [64, 64];
 // With a critic that sees the whole board, bootstrapped advantages are sound.
-export const VISION_GAMMA = 0.998;
+// The discount is this close to 1 on purpose. At 0.998, food sooner was worth
+// enough more that small risks paid: the policy rushed, and cleared about 89%
+// of games however long it trained. A discount of 1 did no better than this.
+export const VISION_GAMMA = 0.9995;
 export const VISION_GAE_LAMBDA = 0.95;
-// Both stay constant. Decaying the learning rate left one run in four stuck
-// at a score of about 90 without ever clearing the board.
+// The learning rate drops to the settled value once the policy clears the
+// board in at least half of its validation games. Without the drop, training
+// at this discount fell apart for a while every few million steps. Dropping
+// it on a schedule instead left one run in four stuck at a score of about 90
+// without ever clearing the board.
 export const VISION_LEARNING_RATE = 3e-4;
+export const VISION_SETTLED_LEARNING_RATE = 1e-4;
+// Constant. Cutting it to 0.001 once the policy was clearing didn't stop
+// training from falling apart.
 export const VISION_ENTROPY_COEFFICIENT = 0.01;
 export const VISION_MAX_GRAD_NORM = 0.5;
 // Board PPO's reward for clearing the board; each food is worth 1 and dying

@@ -9,12 +9,16 @@ import {
   VISION_GAMMA,
   VISION_LEARNING_RATE,
   VISION_POLICY_AVERAGE_DECAY,
+  VISION_SETTLED_LEARNING_RATE,
 } from "./config";
 import { visionInputCount, visionTypicalInputs } from "./BoardVision";
 import type { BoardVision } from "./BoardVision";
 import { VisionNetwork } from "./VisionNetwork";
 
 const EPSILON = 1e-8;
+// How much of the running average of the advantages' spread each rollout
+// keeps.
+const ADVANTAGE_SPREAD_DECAY = 0.9;
 
 // PPO for Board PPO's two networks: a policy that reads the board, and a
 // critic that reads the same board plus how hungry the snake is (which the
@@ -53,6 +57,9 @@ export class VisionPPOOptimizer {
   private readonly returns: Float32Array;
 
   private updates = 0;
+  private learningRate = VISION_LEARNING_RATE;
+  // Running average of the advantages' standard deviation across rollouts.
+  private advantageSpread = 0;
 
   // Position within the update being trained.
   private readonly order: Int32Array;
@@ -91,6 +98,12 @@ export class VisionPPOOptimizer {
     this.advantages = new Float32Array(this.sampleCount);
     this.returns = new Float32Array(this.sampleCount);
     this.order = new Int32Array(this.sampleCount);
+  }
+
+  // Switches to the smaller learning rate for a policy that already clears
+  // the board.
+  public settle(): void {
+    this.learningRate = VISION_SETTLED_LEARNING_RATE;
   }
 
   // Samples a move for what the snake sees and stores the step.
@@ -179,9 +192,19 @@ export class VisionPPOOptimizer {
       const centered = this.advantages[t] - mean;
       variance += centered * centered;
     }
+    // Advantages are scaled by their usual spread, not just this rollout's.
+    // A rollout in which no snake died has almost no spread; scaled by its
+    // own, the leftover noise became a full-sized update, and one of those
+    // could wreck a policy that was clearing nearly every game.
     const std = Math.sqrt(variance / this.sampleCount + EPSILON);
+    this.advantageSpread =
+      this.advantageSpread === 0
+        ? std
+        : ADVANTAGE_SPREAD_DECAY * this.advantageSpread +
+          (1 - ADVANTAGE_SPREAD_DECAY) * std;
+    const scale = Math.max(std, this.advantageSpread);
     for (let t = 0; t < this.sampleCount; t++) {
-      this.advantages[t] = (this.advantages[t] - mean) / std;
+      this.advantages[t] = (this.advantages[t] - mean) / scale;
     }
 
     for (let t = 0; t < this.sampleCount; t++) {
@@ -217,8 +240,8 @@ export class VisionPPOOptimizer {
         break;
       }
 
-      this.policy.applyGradient(VISION_LEARNING_RATE);
-      this.critic.applyGradient(VISION_LEARNING_RATE);
+      this.policy.applyGradient(this.learningRate);
+      this.critic.applyGradient(this.learningRate);
       if (this.position === this.sampleCount) {
         this.epoch += 1;
         if (this.epoch === PPO_EPOCHS) {
