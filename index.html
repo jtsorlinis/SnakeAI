@@ -16,8 +16,8 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
     />
-    <script type="module" crossorigin src="/SnakeAI/assets/index-COZPAi13.js"></script>
-    <link rel="stylesheet" crossorigin href="/SnakeAI/assets/index-0lorsn_c.css">
+    <script type="module" crossorigin src="/SnakeAI/assets/index-fBE37adn.js"></script>
+    <link rel="stylesheet" crossorigin href="/SnakeAI/assets/index-CY2OhSCx.css">
   </head>
   <body>
     <div class="shell">
@@ -171,14 +171,25 @@
               </label>
             </div>
 
-            <div class="field-row">
-              <span class="field-label" id="gridSizeLabel">Grid size</span>
-              <div class="stepper" role="group" aria-labelledby="gridSizeLabel">
-                <button id="gridDown" type="button" aria-label="Decrease grid size">−</button>
-                <span id="gridValue">10×10</span>
-                <button id="gridUp" type="button" aria-label="Increase grid size">+</button>
+            <fieldset id="boardSizePicker" class="field">
+              <legend class="field-label">Board size</legend>
+              <div class="segmented">
+                <label class="segment">
+                  <input type="radio" name="boardSize" value="10" checked />
+                  <span class="segment-body">
+                    <span class="segment-name">10×10</span>
+                    <span class="segment-kind">100 cells</span>
+                  </span>
+                </label>
+                <label class="segment">
+                  <input type="radio" name="boardSize" value="20" />
+                  <span class="segment-body">
+                    <span class="segment-name">20×20</span>
+                    <span class="segment-kind">400 cells</span>
+                  </span>
+                </label>
               </div>
-            </div>
+            </fieldset>
 
             <button id="resetTraining" class="reset-button" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true">
